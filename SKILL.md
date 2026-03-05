@@ -1,6 +1,6 @@
 ---
 name: zoho-recruit-openclaw-skill
-description: Connect OpenClaw to Zoho Recruit via OAuth and API endpoints. Use when setting up Zoho Recruit authentication, storing refresh/access tokens in Vercel KV, testing Recruit API connectivity, listing job openings/candidates, or building applicant sync automations (e.g., Indeed -> Zoho Recruit).
+description: Connect OpenClaw to Zoho Recruit via OAuth and API endpoints. Use when setting up Zoho Recruit authentication, storing refresh/access tokens in Vercel KV, checking Recruit API reachability/connectivity, listing job openings/candidates, or building applicant sync automations (e.g., Indeed -> Zoho Recruit).
 ---
 
 # Zoho Recruit OpenClaw Skill
@@ -58,3 +58,5 @@ Use this callback URL in Zoho API Console:
 1. Open `/api/oauth/zoho/start` and complete consent.
 2. Call `/api/recruit/ping` with secret.
 3. Confirm `ok: true`.
+
+For operations and troubleshooting, see [references/operations.md](references/operations.md).
