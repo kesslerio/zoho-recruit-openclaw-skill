@@ -6,7 +6,7 @@ export default async function handler(req, res) {
     return json(res, 500, { ok: false, error: "ZOHO_CLIENT_ID missing" });
   }
 
-  const scope = process.env.ZOHO_SCOPE || "ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ,ZohoRecruit.modules.attachments.READ";
+  const scope = process.env.ZOHO_SCOPE || "ZohoRecruit.modules.ALL,ZohoRecruit.modules.notes.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ,ZohoRecruit.modules.attachments.READ";
   const state = crypto.randomUUID();
   const redirectUri = process.env.ZOHO_REDIRECT_URI || `${getBaseUrl(req)}/api/oauth/zoho/callback`;
 
