@@ -170,7 +170,18 @@ async function getValidToken() {
   return requestAccessTokenRefresh(stored);
 }
 
-async function recruitRequestOnce(path, { method = "GET", query = {}, token, headers = {} } = {}) {
+function buildRequestBody(body, headers) {
+  if (body === undefined || body === null) return null;
+  if (typeof body === "string" || body instanceof URLSearchParams || body instanceof Uint8Array) return body;
+
+  if (!headers["content-type"] && !headers["Content-Type"]) {
+    headers["content-type"] = "application/json";
+  }
+
+  return JSON.stringify(body);
+}
+
+async function recruitRequestOnce(path, { method = "GET", query = {}, token, headers = {}, body = null } = {}) {
   const base = zohoRecruitBase();
   const url = new URL(`${base}${path.startsWith("/") ? path : `/${path}`}`);
   for (const [key, value] of Object.entries(query || {})) {
@@ -178,12 +189,16 @@ async function recruitRequestOnce(path, { method = "GET", query = {}, token, hea
     url.searchParams.set(key, String(value));
   }
 
+  const requestHeaders = {
+    Authorization: `Zoho-oauthtoken ${token.access_token}`,
+    ...headers
+  };
+  const requestBody = buildRequestBody(body, requestHeaders);
+
   const resp = await fetch(url, {
     method,
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token.access_token}`,
-      ...headers
-    }
+    headers: requestHeaders,
+    body: requestBody
   });
 
   if (resp.status === 204) {

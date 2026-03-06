@@ -91,6 +91,35 @@ export function normalizeAttachmentRecord(record, { moduleApiName, recordId, rec
   };
 }
 
+export function normalizeNoteRecord(record, { parentId = null, seModule = null, title = null, content = null } = {}) {
+  return {
+    id: firstDefined(record?.id, record?.ID, record?.details?.id, null)?.toString() || null,
+    title: firstDefined(record?.Note_Title, record?.title, title, null),
+    content: firstDefined(record?.Note_Content, record?.content, content, null),
+    parentId: firstDefined(
+      record?.Parent_Id?.id,
+      record?.Parent_Id,
+      record?.parentId,
+      record?.details?.Parent_Id,
+      parentId,
+      null
+    )?.toString() || null,
+    module: firstDefined(record?.$se_module, record?.se_module, record?.module, seModule, null),
+    createdBy: mergeLookups(
+      normalizeLookup(record?.Created_By),
+      normalizeLookup(record?.created_by),
+      normalizeLookup(record?.details?.created_by)
+    ),
+    modifiedBy: mergeLookups(
+      normalizeLookup(record?.Modified_By),
+      normalizeLookup(record?.modified_by),
+      normalizeLookup(record?.details?.modified_by)
+    ),
+    createdTime: firstDefined(record?.Created_Time, record?.created_time, null),
+    modifiedTime: firstDefined(record?.Modified_Time, record?.modified_time, null)
+  };
+}
+
 export function selectPrimaryResume(attachments) {
   const ranked = [...attachments].sort((left, right) => {
     const leftName = `${left.category || ""} ${left.fileName || ""}`.toLowerCase();

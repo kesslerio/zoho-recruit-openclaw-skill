@@ -13,6 +13,52 @@ export const getBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+export async function readJsonBody(req) {
+  if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) return req.body;
+
+  if (typeof req.body === "string") {
+    const trimmed = req.body.trim();
+    if (!trimmed) return {};
+
+    try {
+      return JSON.parse(trimmed);
+    } catch (error) {
+      error.status = 400;
+      error.type = "validation";
+      error.message = "Invalid JSON request body";
+      throw error;
+    }
+  }
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    error.status = 400;
+    error.type = "validation";
+    error.message = "Invalid JSON request body";
+    throw error;
+  }
+}
+
+export const methodNotAllowed = (res, allowed) => {
+  res.setHeader("allow", allowed.join(", "));
+  return json(res, 405, {
+    ok: false,
+    error: {
+      type: "method_not_allowed",
+      message: `Method not allowed. Use ${allowed.join(", ")}`
+    }
+  });
+};
+
 export const firstQueryValue = (value, fallback = null) => {
   if (Array.isArray(value)) return value[0] ?? fallback;
   return value ?? fallback;
@@ -39,17 +85,33 @@ async function kvFetch(url, method = "GET") {
   return resp.json();
 }
 
+async function kvSet(key, value) {
+  const encodedKey = encodeURIComponent(key);
+  const encodedValue = encodeURIComponent(value);
+  return kvFetch(`${KV_URL}/set/${encodedKey}/${encodedValue}`);
+}
+
+async function kvGet(key) {
+  const encodedKey = encodeURIComponent(key);
+  return kvFetch(`${KV_URL}/get/${encodedKey}`);
+}
+
+export async function saveKvJson(key, value) {
+  return kvSet(key, JSON.stringify(value));
+}
+
+export async function loadKvJson(key) {
+  const out = await kvGet(key);
+  if (!out?.result) return null;
+  return JSON.parse(out.result);
+}
+
 export async function saveTokens(tokenPayload) {
-  const key = encodeURIComponent(TOKEN_KEY);
-  const val = encodeURIComponent(JSON.stringify(tokenPayload));
-  return kvFetch(`${KV_URL}/set/${key}/${val}`);
+  return saveKvJson(TOKEN_KEY, tokenPayload);
 }
 
 export async function loadTokens() {
-  const key = encodeURIComponent(TOKEN_KEY);
-  const out = await kvFetch(`${KV_URL}/get/${key}`);
-  if (!out?.result) return null;
-  return JSON.parse(out.result);
+  return loadKvJson(TOKEN_KEY);
 }
 
 export const requireSecret = (req) => {
