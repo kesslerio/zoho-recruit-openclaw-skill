@@ -41,7 +41,7 @@ Protected endpoints require:
 - `ZOHO_CLIENT_ID`
 - `ZOHO_CLIENT_SECRET`
 - `ZOHO_REGION` (`com`, `eu`, `in`, ...)
-- `ZOHO_SCOPE` (recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ`)
+- `ZOHO_SCOPE` (recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ,ZohoRecruit.modules.attachments.READ`)
 - `INTERNAL_API_SECRET`
 - `KV_REST_API_URL`
 - `KV_REST_API_TOKEN`
@@ -73,5 +73,5 @@ Set Zoho API Console redirect URI to:
 - Access tokens are loaded from KV and auto-refreshed before expiry.
 - Recruit errors are normalized into clear JSON types such as `auth`, `scope`, `missing_module`, and `not_found`.
 - Resume responses expose attachment metadata and direct Zoho download URLs when Zoho returns attachment ids. Downloading those URLs still requires a valid Zoho OAuth token.
-- Title lookup uses the Recruit search API. If `ZohoRecruit.search.READ` is missing, the endpoint returns a scope error instead of silently scanning partial job pages.
+- Title lookup uses the Recruit search API. If `ZohoRecruit.search.READ` is missing, the endpoint returns a scope error instead of silently scanning partial job pages. Candidate detail responses with attachments and the resume endpoint also require `ZohoRecruit.modules.attachments.READ`; after changing scopes, reconnect OAuth before retrying.
 - Zoho field names vary across tenants. The normalized payloads prefer standard Recruit fields and keep the candidate detail endpoint’s raw record payload for debugging tenant-specific mappings.

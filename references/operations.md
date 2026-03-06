@@ -7,13 +7,13 @@
 - OAuth app in Zoho API Console configured as server-based
 - Redirect URI set to `/api/oauth/zoho/callback`
 - `INTERNAL_API_SECRET` set and stored in a secret manager
-- `ZOHO_SCOPE` includes `ZohoRecruit.search.READ` for job-title lookup workflows
+- `ZOHO_SCOPE` includes `ZohoRecruit.search.READ` for job-title lookup workflows and `ZohoRecruit.modules.attachments.READ` for candidate attachment/resume workflows
 
 ## Troubleshooting
 
 ### OAuth consent fails with CRM permission errors
 Cause: CRM scopes used with Recruit-only org.
-Fix: set `ZOHO_SCOPE` to Recruit scopes, e.g. `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ`.
+Fix: set `ZOHO_SCOPE` to Recruit scopes, e.g. `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ,ZohoRecruit.modules.attachments.READ`.
 
 ### Callback returns 500
 Common causes:

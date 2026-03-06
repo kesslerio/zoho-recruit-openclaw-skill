@@ -289,19 +289,25 @@ export async function getCandidateResumeArtifacts(candidateId, applicationId = n
   let recruitBase = zohoRecruitBase();
 
   for (const source of sources) {
-    const { attachments, info, recruitBase: resolvedBase } = await listAttachments(source.moduleApiName, source.recordId);
-    recruitBase = resolvedBase;
-    collected.push({
-      ...source,
-      info,
-      attachments: attachments.map((record) =>
-        normalizeAttachmentRecord(record, {
-          moduleApiName: source.moduleApiName,
-          recordId: source.recordId,
-          recruitBase: resolvedBase
-        })
-      )
-    });
+    try {
+      const { attachments, info, recruitBase: resolvedBase } = await listAttachments(source.moduleApiName, source.recordId);
+      recruitBase = resolvedBase;
+      collected.push({
+        ...source,
+        info,
+        attachments: attachments.map((record) =>
+          normalizeAttachmentRecord(record, {
+            moduleApiName: source.moduleApiName,
+            recordId: source.recordId,
+            recruitBase: resolvedBase
+          })
+        )
+      });
+    } catch (error) {
+      const isOptionalApplicationSource = source.label === "application";
+      const canSkipOptionalSource = error?.type === "missing_module" || error?.code === "INVALID_URL_PATTERN";
+      if (!isOptionalApplicationSource || !canSkipOptionalSource) throw error;
+    }
   }
 
   const attachments = collected.flatMap((item) => item.attachments.map((attachment) => ({ ...attachment, source: item.label })));

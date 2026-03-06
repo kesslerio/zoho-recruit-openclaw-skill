@@ -28,11 +28,14 @@ function pickValue(record, keys) {
   return null;
 }
 
-function normalizeLookup(value) {
+function normalizeLookup(value, { primitive = "id" } = {}) {
   if (!value) return null;
+  if (Array.isArray(value)) return normalizeLookup(value[0], { primitive });
   if (typeof value === "string" || typeof value === "number") {
     const text = String(value);
-    return { id: text, name: null };
+    return primitive === "name"
+      ? { id: null, name: text }
+      : { id: text, name: null };
   }
 
   const id = firstDefined(value.id, value.ID, value.record_id, value.value);
@@ -41,6 +44,16 @@ function normalizeLookup(value) {
   return {
     id: id ? String(id) : null,
     name: name ? String(name) : null
+  };
+}
+
+function mergeLookups(...lookups) {
+  const present = lookups.filter(Boolean);
+  if (present.length === 0) return null;
+
+  return {
+    id: firstDefined(...present.map((lookup) => lookup.id), null),
+    name: firstDefined(...present.map((lookup) => lookup.name), null)
   };
 }
 
@@ -67,7 +80,11 @@ export function normalizeAttachmentRecord(record, { moduleApiName, recordId, rec
     category: category ? String(category) : null,
     createdTime: firstDefined(record?.Created_Time, record?.created_time, null),
     modifiedTime: firstDefined(record?.Modified_Time, record?.modified_time, null),
-    owner: normalizeLookup(record?.Owner || record?.$Owner || record?.Attachment_Owner),
+    owner: mergeLookups(
+      normalizeLookup(record?.Owner),
+      normalizeLookup(record?.$Owner, { primitive: "name" }),
+      normalizeLookup(record?.Attachment_Owner, { primitive: "name" })
+    ),
     sourceModule: moduleApiName,
     sourceRecordId: String(recordId),
     downloadUrl: id ? `${recruitBase}/recruit/v2/${moduleApiName}/${encodeURIComponent(recordId)}/Attachments/${encodeURIComponent(id)}` : null
@@ -94,9 +111,20 @@ export function normalizeJobRecord(record) {
     title: firstDefined(record?.Posting_Title, record?.Potential_Name, record?.Title, null),
     status: firstDefined(record?.Job_Opening_Status, record?.Status, null),
     department: firstDefined(record?.Department, record?.Department_Name, null),
-    owner: normalizeLookup(record?.Job_Opening_Owner || record?.Owner || record?.Hiring_Manager),
-    client: normalizeLookup(record?.Client_Name || record?.Client),
-    recruiter: normalizeLookup(record?.Assigned_Recruiter || record?.Recruiter || record?.Candidate_Owner),
+    owner: mergeLookups(
+      normalizeLookup(record?.Job_Opening_Owner),
+      normalizeLookup(record?.Owner),
+      normalizeLookup(record?.Hiring_Manager, { primitive: "name" })
+    ),
+    client: mergeLookups(
+      normalizeLookup(record?.Client),
+      normalizeLookup(record?.Client_Name, { primitive: "name" })
+    ),
+    recruiter: mergeLookups(
+      normalizeLookup(record?.Assigned_Recruiter, { primitive: "name" }),
+      normalizeLookup(record?.Recruiter, { primitive: "name" }),
+      normalizeLookup(record?.Candidate_Owner, { primitive: "name" })
+    ),
     location: {
       city: firstDefined(record?.City, record?.Job_Opening_City, null),
       state: firstDefined(record?.State, record?.Job_Opening_State, null),
@@ -154,9 +182,20 @@ export function normalizeApplicationRecord(record) {
     status: firstDefined(record?.Application_Status, record?.Status, record?.Candidate_Status, null),
     stage: firstDefined(record?.Stage, record?.Pipeline_Stage, null),
     source: firstDefined(record?.Source, record?.Application_Source, null),
-    candidate: normalizeLookup(record?.Candidate_Name || record?.Candidate || record?.Candidate_Id),
-    jobOpening: normalizeLookup(record?.Job_Opening || record?.Job_Opening_Name || record?.Posting_Title),
-    owner: normalizeLookup(record?.Owner || record?.Application_Owner),
+    candidate: mergeLookups(
+      normalizeLookup(record?.Candidate),
+      normalizeLookup(record?.Candidate_Name, { primitive: "name" }),
+      normalizeLookup(record?.Candidate_Id, { primitive: "id" })
+    ),
+    jobOpening: mergeLookups(
+      normalizeLookup(record?.Job_Opening),
+      normalizeLookup(record?.Job_Opening_Name, { primitive: "name" }),
+      normalizeLookup(record?.Posting_Title, { primitive: "name" })
+    ),
+    owner: mergeLookups(
+      normalizeLookup(record?.Owner),
+      normalizeLookup(record?.Application_Owner, { primitive: "name" })
+    ),
     createdTime: firstDefined(record?.Created_Time, null),
     modifiedTime: firstDefined(record?.Modified_Time, null)
   };
@@ -219,8 +258,14 @@ export function normalizeCandidateRecord(record, { attachments = [], application
       attachmentCount: attachments.length,
       primaryResume: selectPrimaryResume(attachments)
     },
-    jobOpening: normalizeLookup(record?.Job_Opening || record?.Job_Opening_Name),
-    owner: normalizeLookup(record?.Candidate_Owner || record?.Owner),
+    jobOpening: mergeLookups(
+      normalizeLookup(record?.Job_Opening),
+      normalizeLookup(record?.Job_Opening_Name, { primitive: "name" })
+    ),
+    owner: mergeLookups(
+      normalizeLookup(record?.Candidate_Owner, { primitive: "name" }),
+      normalizeLookup(record?.Owner)
+    ),
     createdTime: firstDefined(record?.Created_Time, null),
     updatedTime: firstDefined(record?.Updated_On, record?.Modified_Time, null),
     summaryText: stripHtml(firstDefined(record?.Additional_Info, record?.Profile_Summary, null)),
@@ -232,15 +277,20 @@ export function normalizeCandidateRecord(record, { attachments = [], application
 }
 
 export function normalizeApplicantRecord(record, { job = null } = {}) {
-  const applicationLookup = normalizeLookup(record?.Application || record?.Application_Name || record?.Application_Id);
+  const applicationLookup = mergeLookups(
+    normalizeLookup(record?.Application),
+    normalizeLookup(record?.Application_Name, { primitive: "name" }),
+    normalizeLookup(record?.Application_Id, { primitive: "id" })
+  );
+  const applicationId = applicationLookup?.id ?? firstDefined(record?.Application_ID, record?.Application_Id, null) ?? null;
   const candidate = normalizeCandidateRecord(record, { attachments: [], job });
 
   return {
     ...candidate,
-    applicationId: applicationLookup?.id || firstDefined(record?.Application_ID, record?.Application_Id, null),
+    applicationId,
     reviewPayload: {
       ...candidate.reviewPayload,
-      applicationId: applicationLookup?.id || firstDefined(record?.Application_ID, record?.Application_Id, null),
+      applicationId,
       jobId: job?.id || candidate.jobOpening?.id || null
     }
   };

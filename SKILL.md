@@ -14,7 +14,7 @@ Set these environment variables in Vercel:
 - `ZOHO_CLIENT_ID`
 - `ZOHO_CLIENT_SECRET`
 - `ZOHO_REGION` (`com`, `eu`, `in`, ...)
-- `ZOHO_SCOPE` (default recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ`)
+- `ZOHO_SCOPE` (default recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ,ZohoRecruit.modules.attachments.READ`)
 - `INTERNAL_API_SECRET`
 
 Optional:
@@ -66,7 +66,7 @@ Use this callback URL in Zoho API Console:
 
 ## Review workflow notes
 
-- Job title lookups use the Recruit search API, so `ZohoRecruit.search.READ` must be in `ZOHO_SCOPE`.
+- Job title lookups use the Recruit search API, so `ZohoRecruit.search.READ` must be in `ZOHO_SCOPE`, and attachment-backed candidate/resume flows also require `ZohoRecruit.modules.attachments.READ`.
 - Candidate detail responses include a normalized `reviewPayload` for scoring/rubric workflows.
 - Resume endpoint responses merge candidate attachments and optional application attachments when `applicationId` is provided.
 - Zoho attachment `downloadUrl` values require Zoho OAuth authorization when fetched directly.
