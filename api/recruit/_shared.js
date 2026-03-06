@@ -198,7 +198,7 @@ async function recruitRequestOnce(path, { method = "GET", query = {}, token, hea
 
   const embeddedError = unwrapRecruitError(payload);
   if (embeddedError?.status === "error") {
-    throw classifyRecruitError(resp.status || 400, payload, base, path);
+    throw classifyRecruitError(resp.status >= 400 ? resp.status : 400, payload, base, path);
   }
 
   return { payload, response: resp, url: url.toString(), recruitBase: base };
