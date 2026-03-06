@@ -14,7 +14,7 @@ Set these environment variables in Vercel:
 - `ZOHO_CLIENT_ID`
 - `ZOHO_CLIENT_SECRET`
 - `ZOHO_REGION` (`com`, `eu`, `in`, ...)
-- `ZOHO_SCOPE` (default recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL`)
+- `ZOHO_SCOPE` (default recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ`)
 - `INTERNAL_API_SECRET`
 
 Optional:
@@ -36,6 +36,10 @@ Also connect Vercel KV / Upstash and ensure these are present:
 - `GET /api/token` — returns stored token data (protected)
 - `GET /api/refresh` — refreshes access token from refresh token (protected)
 - `GET /api/recruit/ping` — validates Recruit API reachability (protected)
+- `GET /api/recruit/jobs` — lists job openings or finds one by `id` / exact `title` (protected)
+- `GET /api/recruit/jobs/:jobId/applicants` — lists associated applicants/candidates for a job opening (protected)
+- `GET /api/recruit/candidates/:candidateId` — returns normalized candidate detail and optional application/job context (protected)
+- `GET /api/recruit/candidates/:candidateId/resume` — returns attachment metadata and resume-oriented download URLs (protected)
 
 Protected endpoints require either:
 
@@ -57,6 +61,14 @@ Use this callback URL in Zoho API Console:
 
 1. Open `/api/oauth/zoho/start` and complete consent.
 2. Call `/api/recruit/ping` with secret.
-3. Confirm `ok: true`.
+3. Call `/api/recruit/jobs` with secret.
+4. Confirm `ok: true`.
+
+## Review workflow notes
+
+- Job title lookups use the Recruit search API, so `ZohoRecruit.search.READ` must be in `ZOHO_SCOPE`.
+- Candidate detail responses include a normalized `reviewPayload` for scoring/rubric workflows.
+- Resume endpoint responses merge candidate attachments and optional application attachments when `applicationId` is provided.
+- Zoho attachment `downloadUrl` values require Zoho OAuth authorization when fetched directly.
 
 For operations and troubleshooting, see [references/operations.md](references/operations.md).

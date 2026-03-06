@@ -13,12 +13,21 @@ export const getBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+export const firstQueryValue = (value, fallback = null) => {
+  if (Array.isArray(value)) return value[0] ?? fallback;
+  return value ?? fallback;
+};
+
+function trimTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/, "");
+}
+
 async function kvFetch(url, method = "GET") {
   if (!KV_URL || !KV_TOKEN) throw new Error("KV not configured");
   const resp = await fetch(url, {
     method,
     headers: {
-      "Authorization": `Bearer ${KV_TOKEN}`
+      Authorization: `Bearer ${KV_TOKEN}`
     }
   });
 
@@ -56,45 +65,7 @@ export const zohoAccountsHost = () => {
 };
 
 export const zohoRecruitBase = () => {
-  if (process.env.ZOHO_RECRUIT_BASE) return process.env.ZOHO_RECRUIT_BASE;
+  if (process.env.ZOHO_RECRUIT_BASE) return trimTrailingSlash(process.env.ZOHO_RECRUIT_BASE);
   const region = process.env.ZOHO_REGION || "com";
   return `https://recruit.zoho.${region}`;
 };
-
-export async function refreshStoredToken() {
-  const stored = await loadTokens();
-  if (!stored?.refresh_token) throw new Error("No refresh token stored");
-  if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET) {
-    throw new Error("Missing ZOHO_CLIENT_ID/ZOHO_CLIENT_SECRET");
-  }
-
-  const form = new URLSearchParams({
-    grant_type: "refresh_token",
-    client_id: process.env.ZOHO_CLIENT_ID,
-    client_secret: process.env.ZOHO_CLIENT_SECRET,
-    refresh_token: stored.refresh_token
-  });
-
-  const resp = await fetch(`${zohoAccountsHost()}/oauth/v2/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: form.toString()
-  });
-
-  const data = await resp.json();
-  if (!resp.ok || data.error) {
-    throw new Error(`Refresh failed: ${JSON.stringify(data)}`);
-  }
-
-  const now = Date.now();
-  const merged = {
-    ...stored,
-    ...data,
-    refresh_token: stored.refresh_token,
-    obtained_at: now,
-    expires_at: now + (Number(data.expires_in || 0) * 1000)
-  };
-
-  await saveTokens(merged);
-  return merged;
-}
