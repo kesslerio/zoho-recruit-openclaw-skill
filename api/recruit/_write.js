@@ -389,10 +389,14 @@ function extractMutationDetails(payload) {
 }
 
 async function updateRecruitRecord(moduleApiName, recordId, fields, trigger = []) {
+  const sanitizedFields = { ...fields };
+  delete sanitizedFields.id;
+  delete sanitizedFields.ID;
+
   const body = {
     data: [{
-      id: String(recordId),
-      ...fields
+      ...sanitizedFields,
+      id: String(recordId)
     }]
   };
 
@@ -434,8 +438,8 @@ async function createRecruitNote(moduleApiName, recordId, title, content) {
   };
 }
 
-async function findExistingIdempotentNote(moduleApiName, recordId, idempotencyKey) {
-  if (!idempotencyKey) return null;
+async function findExistingIdempotentNote(moduleApiName, recordId, idempotencyKey, sourceRunId = null) {
+  if (!idempotencyKey && !sourceRunId) return null;
 
   try {
     const result = await recruitRequest("/recruit/v2/Notes", {
@@ -446,9 +450,12 @@ async function findExistingIdempotentNote(moduleApiName, recordId, idempotencyKe
       const note = normalizeNoteRecord(record);
       const parentId = record?.Parent_Id?.id || record?.Parent_Id || note.parentId;
       const seModule = record?.$se_module || record?.se_module || note.module;
+      const content = String(note.content || "");
+      const matchesIdempotencyKey = idempotencyKey ? content.includes(`${NOTE_MARKER_PREFIX} ${idempotencyKey}`) : false;
+      const matchesSourceRunId = sourceRunId ? content.includes(`${SOURCE_RUN_MARKER_PREFIX} ${sourceRunId}`) : false;
       return String(parentId || "") === String(recordId)
         && String(seModule || "") === String(moduleApiName)
-        && String(note.content || "").includes(`${NOTE_MARKER_PREFIX} ${idempotencyKey}`);
+        && (matchesIdempotencyKey || matchesSourceRunId);
     });
 
     return match ? {
@@ -524,7 +531,7 @@ export async function executeRecruitDecision(moduleApiName, recordId, body) {
 
   let note = null;
   if (input.createNote) {
-    const existingNote = await findExistingIdempotentNote(moduleApiName, recordId, idempotency.idempotencyKey);
+    const existingNote = await findExistingIdempotentNote(moduleApiName, recordId, idempotency.idempotencyKey, idempotency.sourceRunId);
     if (existingNote) {
       note = existingNote.note;
       recruitBase = existingNote.recruitBase;
@@ -564,7 +571,7 @@ export async function createRecruitRecordNote(moduleApiName, recordId, body) {
 
   const recordResult = await getRecruitRecord(moduleApiName, recordId);
   const currentState = normalizeRecordState(moduleApiName, recordResult.record);
-  let noteResult = await findExistingIdempotentNote(moduleApiName, recordId, idempotency.idempotencyKey);
+  let noteResult = await findExistingIdempotentNote(moduleApiName, recordId, idempotency.idempotencyKey, idempotency.sourceRunId);
 
   if (!noteResult) {
     const title = buildNoteTitle(input, "OpenClaw Recruit Note");
