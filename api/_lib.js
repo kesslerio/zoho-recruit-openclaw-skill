@@ -1,10 +1,14 @@
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
-const TOKEN_KEY = process.env.ZOHO_TOKEN_KEY || "zoho:tokens";
 let inMemoryTokens = null;
 
-export const json = (res, status, data) => {
+const getKvUrl = () => process.env.KV_REST_API_URL;
+const getKvToken = () => process.env.KV_REST_API_TOKEN;
+const getTokenKey = () => process.env.ZOHO_TOKEN_KEY || "zoho:tokens";
+
+export const json = (res, status, data, headers = {}) => {
   res.status(status).setHeader("content-type", "application/json");
+  for (const [name, value] of Object.entries(headers || {})) {
+    res.setHeader(name, value);
+  }
   res.send(JSON.stringify(data));
 };
 
@@ -65,7 +69,7 @@ export const firstQueryValue = (value, fallback = null) => {
   return value ?? fallback;
 };
 
-export const hasKvConfig = () => Boolean(KV_URL && KV_TOKEN);
+export const hasKvConfig = () => Boolean(getKvUrl() && getKvToken());
 
 export const getTokenStorageMode = () => {
   if (hasKvConfig()) return "kv";
@@ -79,10 +83,11 @@ function trimTrailingSlash(value) {
 
 async function kvFetch(url, method = "GET") {
   if (!hasKvConfig()) throw new Error("KV not configured");
+  const kvToken = getKvToken();
   const resp = await fetch(url, {
     method,
     headers: {
-      Authorization: `Bearer ${KV_TOKEN}`
+      Authorization: `Bearer ${kvToken}`
     }
   });
 
@@ -95,14 +100,16 @@ async function kvFetch(url, method = "GET") {
 }
 
 async function kvSet(key, value) {
+  const kvUrl = getKvUrl();
   const encodedKey = encodeURIComponent(key);
   const encodedValue = encodeURIComponent(value);
-  return kvFetch(`${KV_URL}/set/${encodedKey}/${encodedValue}`);
+  return kvFetch(`${kvUrl}/set/${encodedKey}/${encodedValue}`);
 }
 
 async function kvGet(key) {
+  const kvUrl = getKvUrl();
   const encodedKey = encodeURIComponent(key);
-  return kvFetch(`${KV_URL}/get/${encodedKey}`);
+  return kvFetch(`${kvUrl}/get/${encodedKey}`);
 }
 
 export async function saveKvJson(key, value) {
@@ -141,7 +148,7 @@ export async function saveTokens(tokenPayload) {
     };
   }
 
-  await saveKvJson(TOKEN_KEY, tokenPayload);
+  await saveKvJson(getTokenKey(), tokenPayload);
   return {
     ok: true,
     storage: "kv",
@@ -152,7 +159,7 @@ export async function saveTokens(tokenPayload) {
 export async function loadTokens() {
   let kvTokens = null;
   if (hasKvConfig()) {
-    kvTokens = await loadKvJson(TOKEN_KEY);
+    kvTokens = await loadKvJson(getTokenKey());
     if (kvTokens) {
       inMemoryTokens = kvTokens;
       return kvTokens;

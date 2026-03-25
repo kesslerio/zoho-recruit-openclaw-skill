@@ -1,5 +1,10 @@
 import { getBaseUrl, hasKvConfig, json, saveTokens, zohoAccountsHost } from "../../_lib.js";
 
+const NO_STORE_HEADERS = {
+  "cache-control": "no-store, max-age=0",
+  pragma: "no-cache"
+};
+
 export default async function handler(req, res) {
   try {
     const code = req.query.code;
@@ -46,7 +51,7 @@ export default async function handler(req, res) {
         storage: "kv",
         expires_in: data.expires_in,
         api_domain: data.api_domain
-      });
+      }, NO_STORE_HEADERS);
     }
 
     return json(res, 200, {
@@ -61,7 +66,7 @@ export default async function handler(req, res) {
       expires_in: data.expires_in,
       api_domain: data.api_domain,
       expires_at: tokenPayload.expires_at
-    });
+    }, NO_STORE_HEADERS);
   } catch (err) {
     return json(res, 500, { ok: false, error: String(err?.message || err) });
   }
