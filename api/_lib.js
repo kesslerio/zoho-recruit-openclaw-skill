@@ -1,6 +1,7 @@
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const TOKEN_KEY = process.env.ZOHO_TOKEN_KEY || "zoho:tokens";
+let inMemoryTokens = null;
 
 export const json = (res, status, data) => {
   res.status(status).setHeader("content-type", "application/json");
@@ -64,12 +65,20 @@ export const firstQueryValue = (value, fallback = null) => {
   return value ?? fallback;
 };
 
+export const hasKvConfig = () => Boolean(KV_URL && KV_TOKEN);
+
+export const getTokenStorageMode = () => {
+  if (hasKvConfig()) return "kv";
+  if (process.env.ZOHO_REFRESH_TOKEN) return "env";
+  return "none";
+};
+
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
 }
 
 async function kvFetch(url, method = "GET") {
-  if (!KV_URL || !KV_TOKEN) throw new Error("KV not configured");
+  if (!hasKvConfig()) throw new Error("KV not configured");
   const resp = await fetch(url, {
     method,
     headers: {
@@ -106,12 +115,61 @@ export async function loadKvJson(key) {
   return JSON.parse(out.result);
 }
 
+function loadEnvTokens() {
+  const refreshToken = process.env.ZOHO_REFRESH_TOKEN || null;
+  const accessToken = process.env.ZOHO_ACCESS_TOKEN || null;
+  const expiresAt = Number(process.env.ZOHO_ACCESS_TOKEN_EXPIRES_AT || 0) || null;
+  const apiDomain = process.env.ZOHO_API_DOMAIN || null;
+
+  if (!refreshToken && !accessToken) return null;
+
+  return {
+    refresh_token: refreshToken,
+    access_token: accessToken,
+    expires_at: expiresAt,
+    api_domain: apiDomain
+  };
+}
+
 export async function saveTokens(tokenPayload) {
-  return saveKvJson(TOKEN_KEY, tokenPayload);
+  inMemoryTokens = tokenPayload;
+  if (!hasKvConfig()) {
+    return {
+      ok: true,
+      storage: getTokenStorageMode(),
+      persisted: false
+    };
+  }
+
+  await saveKvJson(TOKEN_KEY, tokenPayload);
+  return {
+    ok: true,
+    storage: "kv",
+    persisted: true
+  };
 }
 
 export async function loadTokens() {
-  return loadKvJson(TOKEN_KEY);
+  let kvTokens = null;
+  if (hasKvConfig()) {
+    kvTokens = await loadKvJson(TOKEN_KEY);
+    if (kvTokens) {
+      inMemoryTokens = kvTokens;
+      return kvTokens;
+    }
+  }
+
+  const envTokens = loadEnvTokens();
+  const merged = {
+    ...(envTokens || {}),
+    ...(inMemoryTokens || {})
+  };
+
+  if (envTokens?.refresh_token && !merged.refresh_token) {
+    merged.refresh_token = envTokens.refresh_token;
+  }
+
+  return merged.refresh_token || merged.access_token ? merged : null;
 }
 
 export const requireSecret = (req) => {
