@@ -118,10 +118,45 @@ test("health reports read readiness when client config and refresh token exist",
     assert.equal(res.code, 200);
     assert.equal(res.body.hasClient, true);
     assert.equal(res.body.hasRefreshToken, true);
+    assert.equal(res.body.hasAccessToken, false);
+    assert.equal(res.body.hasStoredToken, true);
     assert.equal(res.body.tokenStorage, "env");
     assert.equal(res.body.readReady, true);
     assert.equal(res.body.writeReady, false);
-    assert.deepEqual(res.body.missing.write, ["KV_REST_API_URL", "KV_REST_API_TOKEN"]);
+    assert.deepEqual(res.body.missing.write, ["KV_REST_API_URL", "KV_REST_API_TOKEN", "completed OAuth token storage"]);
+  });
+});
+
+test("health does not report ready when KV is configured but no token exists yet", async () => {
+  await withEnv({
+    KV_REST_API_URL: "https://kv.example.test",
+    KV_REST_API_TOKEN: "kv-token",
+    ZOHO_CLIENT_ID: "client-demo",
+    ZOHO_CLIENT_SECRET: "secret-demo"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      if (String(url).startsWith("https://kv.example.test/get/")) {
+        return {
+          ok: true,
+          json: async () => ({ result: null })
+        };
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }, async () => {
+      const { default: handler } = await importFresh("../api/health.js");
+      const req = { headers: { host: "example.vercel.app", "x-forwarded-proto": "https" } };
+      const res = createResponseRecorder();
+
+      await handler(req, res);
+
+      assert.equal(res.code, 200);
+      assert.equal(res.body.hasKv, true);
+      assert.equal(res.body.hasStoredToken, false);
+      assert.equal(res.body.readReady, false);
+      assert.equal(res.body.writeReady, false);
+      assert.deepEqual(res.body.missing.read, ["ZOHO_REFRESH_TOKEN or completed OAuth token storage"]);
+    });
   });
 });
 
