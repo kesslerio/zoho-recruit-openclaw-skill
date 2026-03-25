@@ -272,6 +272,105 @@ export async function searchJobOpeningsByTitle(title) {
   return lastResult || { payload: { data: [], info: { count: 0, more_records: false } }, recruitBase: zohoRecruitBase() };
 }
 
+function parseCandidateStatusFilter(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => String(item).split(","))
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  return String(value)
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function applicationMatchesJob(record, jobId) {
+  const candidates = [
+    record?.$Job_Opening_Id,
+    record?.Job_Opening?.id,
+    record?.Job_Opening?.ID,
+    record?.Job_Opening_Id,
+    record?.Job_Opening_ID,
+    record?.Job_Opening_Name?.id
+  ];
+
+  return candidates.some((value) => value !== undefined && value !== null && String(value) === String(jobId));
+}
+
+function applicationMatchesCandidateStatuses(record, candidateStatuses) {
+  if (candidateStatuses.length === 0) return true;
+
+  const currentStatus = String(
+    record?.Application_Status
+    || record?.Candidate_Status
+    || record?.Status
+    || ""
+  ).trim().toLowerCase();
+
+  return candidateStatuses.includes(currentStatus);
+}
+
+function shouldFallbackApplicantRelation(error) {
+  return error?.type === "not_found"
+    || error?.type === "missing_module"
+    || error?.code === "INVALID_URL_PATTERN"
+    || error?.code === "INVALID_DATA";
+}
+
+async function listJobApplicantsFromApplications(jobId, query = {}) {
+  const page = clampPositiveInt(query.page, 1);
+  const perPage = clampPositiveInt(query.per_page ?? query.perPage, 50, { max: 200 });
+  const candidateStatuses = parseCandidateStatusFilter(query.candidate_statuses);
+  const pageEndIndex = page * perPage;
+  const scanPerPage = 200;
+
+  const matches = [];
+  let recruitBase = zohoRecruitBase();
+  let moreRecords = true;
+  let scanPage = 1;
+
+  while (moreRecords && matches.length <= pageEndIndex) {
+    const result = await recruitRequest(`/recruit/v2/${RECRUIT_MODULES.applications}`, {
+      query: {
+        page: scanPage,
+        per_page: scanPerPage
+      }
+    });
+
+    recruitBase = result.recruitBase;
+    const records = Array.isArray(result.payload?.data) ? result.payload.data : [];
+    const filtered = records.filter((record) =>
+      applicationMatchesJob(record, jobId) && applicationMatchesCandidateStatuses(record, candidateStatuses)
+    );
+    matches.push(...filtered);
+
+    moreRecords = Boolean(result.payload?.info?.more_records);
+    if (!moreRecords || records.length === 0) break;
+    scanPage += 1;
+  }
+
+  const startIndex = (page - 1) * perPage;
+  const data = matches.slice(startIndex, startIndex + perPage);
+  const hasAdditionalMatches = matches.length > startIndex + data.length;
+
+  return {
+    payload: {
+      data,
+      info: {
+        count: data.length,
+        page,
+        per_page: perPage,
+        more_records: hasAdditionalMatches || moreRecords,
+        source: "applications_fallback"
+      }
+    },
+    recruitBase
+  };
+}
+
 export async function listJobApplicants(jobId, query = {}) {
   const candidatePath = `/recruit/v2/${RECRUIT_MODULES.jobOpenings}/${encodeURIComponent(jobId)}/Candidates`;
   const associatePath = `/recruit/v2/${RECRUIT_MODULES.jobOpenings}/${encodeURIComponent(jobId)}/associate`;
@@ -279,9 +378,14 @@ export async function listJobApplicants(jobId, query = {}) {
   try {
     return await recruitRequest(candidatePath, { query });
   } catch (error) {
-    const shouldFallback = error?.type === "not_found" || error?.type === "missing_module" || error?.code === "INVALID_URL_PATTERN";
-    if (!shouldFallback) throw error;
-    return recruitRequest(associatePath, { query });
+    if (!shouldFallbackApplicantRelation(error)) throw error;
+  }
+
+  try {
+    return await recruitRequest(associatePath, { query });
+  } catch (error) {
+    if (!shouldFallbackApplicantRelation(error)) throw error;
+    return listJobApplicantsFromApplications(jobId, query);
   }
 }
 
