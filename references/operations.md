@@ -3,11 +3,14 @@
 ## Minimum production checklist
 
 - Vercel project linked and deployed
-- Vercel KV (Upstash) connected
 - OAuth app in Zoho API Console configured as server-based
 - Redirect URI set to `/api/oauth/zoho/callback`
 - `INTERNAL_API_SECRET` set and stored in a secret manager
 - `ZOHO_SCOPE` includes `ZohoRecruit.search.READ` for job-title lookup workflows, `ZohoRecruit.modules.attachments.READ` for candidate attachment/resume workflows, and `ZohoRecruit.modules.notes.ALL` for write-side decision notes/idempotent note lookup
+- Either:
+  - `ZOHO_REFRESH_TOKEN` set for read-side endpoints, or
+  - Vercel KV (Upstash) connected for KV-backed token storage
+- Vercel KV (Upstash) connected if write-side endpoints are required
 
 ## Troubleshooting
 
@@ -18,8 +21,10 @@ Fix: set `ZOHO_SCOPE` to Recruit scopes, e.g. `ZohoRecruit.modules.ALL,ZohoRecru
 ### Callback returns 500
 Common causes:
 - Missing `ZOHO_CLIENT_ID` or `ZOHO_CLIENT_SECRET`
-- Missing KV env (`KV_REST_API_URL`, `KV_REST_API_TOKEN`)
+- Missing KV env (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) when callback expects to persist directly
 - Redirect URI mismatch between Zoho console and deployed URL
+
+If KV is absent, the callback now returns `manualEnv.ZOHO_REFRESH_TOKEN`; store that value in Vercel env and redeploy.
 
 ### Recruit ping unauthorized
 Provide secret via query (`?secret=...`) or `x-internal-secret` header.
@@ -27,6 +32,14 @@ Provide secret via query (`?secret=...`) or `x-internal-secret` header.
 ### Recruit ping fails after successful OAuth
 Check Recruit base URL. Default is `https://recruit.zoho.<region>`.
 Set `ZOHO_RECRUIT_BASE` if your tenant requires a custom host.
+
+### Health says `readReady: false`
+Cause: missing Zoho client env or no token source.
+Fix: set `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, and either `ZOHO_REFRESH_TOKEN` or KV env.
+
+### Write endpoint returns config error about KV
+Cause: write-side flows require durable idempotency state.
+Fix: connect Vercel KV / Upstash and set `KV_REST_API_URL` plus `KV_REST_API_TOKEN`.
 
 ### `/api/recruit/jobs?title=...` returns a scope error
 Cause: title lookups use the Recruit search API.

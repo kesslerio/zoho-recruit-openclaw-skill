@@ -5,7 +5,7 @@ Generic Zoho Recruit OAuth + API bridge for OpenClaw workflows.
 ## What this repo provides
 
 - OAuth start + callback flow for Zoho Recruit
-- Token persistence in Vercel KV (Upstash)
+- Token persistence in Vercel KV (Upstash) or read-side fallback via `ZOHO_REFRESH_TOKEN`
 - Protected token/refresh endpoints
 - Recruit connectivity probe endpoint (`/api/recruit/ping`)
 - Recruit read-side endpoints for jobs, applicants, candidate detail, and resume metadata
@@ -52,14 +52,19 @@ Protected endpoints require:
 - `ZOHO_REGION` (`com`, `eu`, `in`, ...)
 - `ZOHO_SCOPE` (recommended: `ZohoRecruit.modules.ALL,ZohoRecruit.modules.notes.ALL,ZohoRecruit.settings.ALL,ZohoRecruit.search.READ,ZohoRecruit.modules.attachments.READ`)
 - `INTERNAL_API_SECRET`
-- `KV_REST_API_URL`
-- `KV_REST_API_TOKEN`
+- `ZOHO_REFRESH_TOKEN` or both `KV_REST_API_URL` and `KV_REST_API_TOKEN`
 
 Optional:
+- `ZOHO_API_DOMAIN`
 - `ZOHO_RECRUIT_BASE`
 - `ZOHO_REDIRECT_URI`
 - `ZOHO_TOKEN_KEY` (default: `zoho:tokens`)
 - `ZOHO_RECRUIT_DECISION_FIELD_MAP` (JSON object mapping normalized decision metadata into tenant-specific Recruit fields)
+
+Notes:
+- Read-only endpoints (`/api/recruit/ping`, jobs, applicants, candidate detail, resume metadata) work with `ZOHO_REFRESH_TOKEN` even if KV is absent.
+- Write-side endpoints still require KV because durable idempotency state is part of the safety contract.
+- `/api/health` now reports `readReady`, `writeReady`, `hasRefreshToken`, and `tokenStorage` to make setup gaps explicit.
 
 ## Deploy (Vercel)
 
@@ -72,20 +77,24 @@ Set Zoho API Console redirect URI to:
 
 `https://<your-domain>/api/oauth/zoho/callback`
 
+If KV is not configured, the OAuth callback returns `manualEnv.ZOHO_REFRESH_TOKEN`. Store that value in Vercel as `ZOHO_REFRESH_TOKEN`, redeploy, and the read-side endpoints can run without KV.
+
 ## Security notes
 
 - Do not commit secrets.
 - Keep `INTERNAL_API_SECRET` in a proper secret manager (1Password/Vercel env).
 - Rotate secrets if ever shared in plaintext.
+- If the OAuth callback returns a refresh token in `manualEnv`, treat it like a password and move it into Vercel env immediately.
 
 ## Write-side behavior notes
 
-- Access tokens are loaded from KV and auto-refreshed before expiry.
+- Access tokens are loaded from KV when present, otherwise refreshed from `ZOHO_REFRESH_TOKEN` and cached only in memory for the current runtime instance.
 - Recruit errors are normalized into clear JSON types such as `auth`, `scope`, `missing_module`, `not_found`, and `idempotency_conflict`.
 - Decision endpoints treat `decision` as normalized audit metadata. Actual Recruit stage/status changes come from explicit `target.stage` / `target.status`, extra `fieldValues`, or `ZOHO_RECRUIT_DECISION_FIELD_MAP`; the API does not guess tenant-specific stage names.
 - Decision, note, and patch endpoints support request-level idempotency keyed by `idempotencyKey` or `sourceRunId`. Reusing the same key with a different payload returns `409 idempotency_conflict`.
 - Decision endpoints write a Recruit note by default so downstream CRM sync and audit logging have a durable human-readable trail.
 - Decision and note writes include OpenClaw idempotency/source-run markers in note content and try to reuse a matching recent note before creating another one.
+- Write-side endpoints return a config error when KV is missing instead of pretending idempotency still exists.
 - Resume responses expose attachment metadata and direct Zoho download URLs when Zoho returns attachment ids. Downloading those URLs still requires a valid Zoho OAuth token.
 - Title lookup uses the Recruit search API. Candidate detail responses with attachments and the resume endpoint also require `ZohoRecruit.modules.attachments.READ`; note workflows are safest with `ZohoRecruit.modules.notes.ALL`. After changing scopes, reconnect OAuth before retrying.
 - Zoho field names vary across tenants. The normalized payloads prefer standard Recruit fields and let operators map custom fields through `ZOHO_RECRUIT_DECISION_FIELD_MAP` rather than baking tenant assumptions into the routes.

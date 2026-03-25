@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { loadKvJson, saveKvJson } from "../_lib.js";
+import { hasKvConfig, loadKvJson, saveKvJson } from "../_lib.js";
 import { RECRUIT_MODULES, getRecruitRecord, recruitRequest } from "./_shared.js";
 import {
   normalizeApplicationRecord,
@@ -47,6 +47,11 @@ function getModuleConfig(moduleApiName) {
   const config = MODULE_CONFIG[moduleApiName];
   if (!config) throw buildError(400, "validation", `Unsupported Recruit module: ${moduleApiName}`);
   return config;
+}
+
+function requireKvForWrites() {
+  if (hasKvConfig()) return;
+  throw buildError(500, "config", "Write endpoints require KV_REST_API_URL and KV_REST_API_TOKEN for idempotency storage");
 }
 
 function firstNonEmpty(...values) {
@@ -509,6 +514,7 @@ function buildResponse({
 }
 
 export async function executeRecruitDecision(moduleApiName, recordId, body) {
+  requireKvForWrites();
   const input = normalizeDecisionInput(body);
   const idempotency = buildIdempotencyContext("decision", moduleApiName, recordId, input);
   const cached = await loadCachedResponse(idempotency);
@@ -564,6 +570,7 @@ export async function executeRecruitDecision(moduleApiName, recordId, body) {
 }
 
 export async function createRecruitRecordNote(moduleApiName, recordId, body) {
+  requireKvForWrites();
   const input = normalizeNoteInput(body);
   const idempotency = buildIdempotencyContext("note", moduleApiName, recordId, input);
   const cached = await loadCachedResponse(idempotency);
@@ -609,6 +616,7 @@ export async function createRecruitRecordNote(moduleApiName, recordId, body) {
 }
 
 export async function patchRecruitRecord(moduleApiName, recordId, body) {
+  requireKvForWrites();
   const fields = asPlainObject(body.fields);
   if (Object.keys(fields).length === 0) {
     throw buildError(400, "validation", "PATCH body requires a non-empty fields object");

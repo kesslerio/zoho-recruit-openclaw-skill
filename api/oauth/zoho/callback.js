@@ -1,4 +1,9 @@
-import { getBaseUrl, json, saveTokens, zohoAccountsHost } from "../../_lib.js";
+import { getBaseUrl, hasKvConfig, json, saveTokens, zohoAccountsHost } from "../../_lib.js";
+
+const NO_STORE_HEADERS = {
+  "cache-control": "no-store, max-age=0",
+  pragma: "no-cache"
+};
 
 export default async function handler(req, res) {
   try {
@@ -31,18 +36,37 @@ export default async function handler(req, res) {
     }
 
     const now = Date.now();
-    await saveTokens({
+    const tokenPayload = {
       ...data,
       obtained_at: now,
       expires_at: now + (Number(data.expires_in || 0) * 1000)
-    });
+    };
+
+    if (hasKvConfig()) {
+      await saveTokens(tokenPayload);
+
+      return json(res, 200, {
+        ok: true,
+        message: "Zoho OAuth connected and token stored",
+        storage: "kv",
+        expires_in: data.expires_in,
+        api_domain: data.api_domain
+      }, NO_STORE_HEADERS);
+    }
 
     return json(res, 200, {
       ok: true,
-      message: "Zoho OAuth connected and token stored",
+      message: "Zoho OAuth connected. KV is not configured, so store the refresh token in ZOHO_REFRESH_TOKEN before using read-side Recruit endpoints.",
+      storage: "manual_env",
+      warning: "This response contains a refresh token. Treat it like a password and store it only in Vercel env.",
+      manualEnv: {
+        ZOHO_REFRESH_TOKEN: data.refresh_token,
+        ZOHO_API_DOMAIN: data.api_domain || null
+      },
       expires_in: data.expires_in,
-      api_domain: data.api_domain
-    });
+      api_domain: data.api_domain,
+      expires_at: tokenPayload.expires_at
+    }, NO_STORE_HEADERS);
   } catch (err) {
     return json(res, 500, { ok: false, error: String(err?.message || err) });
   }

@@ -19,12 +19,14 @@ Set these environment variables in Vercel:
 
 Optional:
 
+- `ZOHO_REFRESH_TOKEN` (read-side fallback when KV is absent)
+- `ZOHO_API_DOMAIN` (optional companion to `ZOHO_REFRESH_TOKEN`)
 - `ZOHO_RECRUIT_BASE` (override Recruit API host)
 - `ZOHO_REDIRECT_URI` (if you want a custom callback URL)
 - `ZOHO_TOKEN_KEY` (defaults to `zoho:tokens`)
 - `ZOHO_RECRUIT_DECISION_FIELD_MAP` (maps normalized decision metadata into tenant-specific Recruit fields)
 
-Also connect Vercel KV / Upstash and ensure these are present:
+For write-side endpoints, also connect Vercel KV / Upstash and ensure these are present:
 
 - `KV_REST_API_URL`
 - `KV_REST_API_TOKEN`
@@ -66,20 +68,22 @@ Use this callback URL in Zoho API Console:
 ## Verify
 
 1. Open `/api/oauth/zoho/start` and complete consent.
-2. Call `/api/recruit/ping` with secret.
-3. Call `/api/recruit/jobs` with secret.
-4. Call a write-side endpoint with an explicit `idempotencyKey` or `sourceRunId`.
-5. Confirm `ok: true`.
+2. If KV is absent, copy `manualEnv.ZOHO_REFRESH_TOKEN` from the callback response into Vercel env and redeploy.
+3. Call `/api/recruit/ping` with secret.
+4. Call `/api/recruit/jobs` with secret.
+5. If KV is configured, call a write-side endpoint with an explicit `idempotencyKey` or `sourceRunId`.
+6. Confirm `ok: true`.
 
 ## Workflow notes
 
 - Job title lookups use the Recruit search API, so `ZohoRecruit.search.READ` must be in `ZOHO_SCOPE`.
 - Attachment-backed candidate/resume flows require `ZohoRecruit.modules.attachments.READ`.
-- Write-side note workflows are safest with `ZohoRecruit.modules.notes.ALL`.
+- Write-side note workflows are safest with `ZohoRecruit.modules.notes.ALL` and require KV-backed idempotency storage.
 - Candidate detail responses include a normalized `reviewPayload` for scoring/rubric workflows.
 - Resume endpoint responses merge candidate attachments and optional application attachments when `applicationId` is provided.
 - Zoho attachment `downloadUrl` values require Zoho OAuth authorization when fetched directly.
 - Decision writes are idempotent when callers provide `idempotencyKey` or `sourceRunId`; the same key with a different payload is rejected.
 - Decision enums are normalized (`approve`, `reject`, `disqualify`, `advance`, `hold`), but tenant-specific stage/status values must still be supplied explicitly or mapped via `ZOHO_RECRUIT_DECISION_FIELD_MAP`.
+- `/api/health` reports `tokenStorage`, `hasRefreshToken`, `readReady`, and `writeReady` so setup gaps are obvious.
 
 For operations and troubleshooting, see [references/operations.md](references/operations.md).
