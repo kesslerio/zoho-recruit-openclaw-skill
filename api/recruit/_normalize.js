@@ -311,7 +311,7 @@ export function normalizeApplicantRecord(record, { job = null } = {}) {
     normalizeLookup(record?.Application_Name, { primitive: "name" }),
     normalizeLookup(record?.Application_Id, { primitive: "id" })
   );
-  const applicationId = applicationLookup?.id ?? firstDefined(record?.Application_ID, record?.Application_Id, null) ?? null;
+  const applicationId = applicationLookup?.id ?? firstDefined(record?.id, record?.ID, record?.Application_ID, record?.Application_Id, null) ?? null;
   const candidate = normalizeCandidateRecord(record, { attachments: [], job });
 
   return {
