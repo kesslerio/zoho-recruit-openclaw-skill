@@ -69,6 +69,24 @@ test("normalizeApplicantRecord falls back to the internal application record id"
   });
 
   assert.equal(applicant.applicationId, "850051000000588062");
+  assert.equal(applicant.candidateId, null);
+  assert.equal(applicant.reviewPayload.candidateId, null);
+});
+
+test("normalizeApplicantRecord preserves the related candidate record id separately from the application id", async () => {
+  const { normalizeApplicantRecord } = await importFresh("../api/recruit/_normalize.js");
+  const applicant = normalizeApplicantRecord({
+    id: "850051000000588062",
+    Application_ID: "ZR_8_APP",
+    Candidate: { id: "850051000000577777", name: "Jacoby Curry" },
+    Full_Name: "Jacoby Curry",
+    Email: "coby@example.com",
+    Application_Status: "Applied"
+  });
+
+  assert.equal(applicant.applicationId, "850051000000588062");
+  assert.equal(applicant.candidateId, "850051000000577777");
+  assert.equal(applicant.reviewPayload.candidateId, "850051000000577777");
 });
 
 test("listJobApplicants falls back to Applications when Zoho rejects job candidate relations", async () => {
