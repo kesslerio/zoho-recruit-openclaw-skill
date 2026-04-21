@@ -311,14 +311,22 @@ export function normalizeApplicantRecord(record, { job = null } = {}) {
     normalizeLookup(record?.Application_Name, { primitive: "name" }),
     normalizeLookup(record?.Application_Id, { primitive: "id" })
   );
+  const candidateLookup = mergeLookups(
+    normalizeLookup(record?.Candidate),
+    normalizeLookup(record?.Candidate_Name, { primitive: "name" }),
+    normalizeLookup(record?.Candidate_Id, { primitive: "id" })
+  );
   const applicationId = applicationLookup?.id ?? firstDefined(record?.id, record?.ID, record?.Application_ID, record?.Application_Id, null) ?? null;
   const candidate = normalizeCandidateRecord(record, { attachments: [], job });
+  const candidateId = candidateLookup?.id ?? candidate.id ?? null;
 
   return {
     ...candidate,
+    candidateId,
     applicationId,
     reviewPayload: {
       ...candidate.reviewPayload,
+      candidateId,
       applicationId,
       jobId: job?.id || candidate.jobOpening?.id || null
     }
