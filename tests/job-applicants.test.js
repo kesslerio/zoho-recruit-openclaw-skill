@@ -69,6 +69,8 @@ test("normalizeApplicantRecord falls back to the internal application record id"
   });
 
   assert.equal(applicant.applicationId, "850051000000588062");
+  assert.equal(applicant.candidateId, null);
+  assert.equal(applicant.reviewPayload.candidateId, null);
 });
 
 test("normalizeApplicantRecord preserves the related candidate record id separately from the application id", async () => {
