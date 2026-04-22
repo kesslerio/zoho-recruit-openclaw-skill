@@ -8,6 +8,7 @@ import {
   getCandidateResumeArtifacts,
   sendApiError
 } from "../../_shared.js";
+import { isResumeAttachment } from "../../_normalize.js";
 
 export default async function handler(req, res) {
   if (!requireSecret(req)) return json(res, 401, { ok: false, error: "Unauthorized" });
@@ -23,7 +24,7 @@ export default async function handler(req, res) {
 
     const artifacts = await getCandidateResumeArtifacts(candidateId, applicationId);
     const attachment = attachmentId
-      ? artifacts.attachments.find((item) => item.id && String(item.id) === String(attachmentId)) || null
+      ? artifacts.attachments.find((item) => item.id && String(item.id) === String(attachmentId) && isResumeAttachment(item)) || null
       : artifacts.primaryResume || null;
 
     if (!attachment?.id || !attachment.sourceModule || !attachment.sourceRecordId) {

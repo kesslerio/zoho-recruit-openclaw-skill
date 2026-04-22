@@ -282,3 +282,49 @@ test("resume-content handler returns base64 for the primary resume", async () =>
     });
   });
 });
+
+test("resume-content handler rejects non-resume attachment ids", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: 'access-demo',
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: '9999999999999'
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.includes('/Candidates/candidate-123/Attachments')) {
+        return jsonResponse({
+          data: [
+            {
+              id: 'att-1',
+              File_Name: 'resume.pdf',
+              Attachment_Category: 'Resume',
+              Modified_Time: '2026-04-20 10:00:00'
+            },
+            {
+              id: 'att-2',
+              File_Name: 'notes.txt',
+              Attachment_Category: 'Other',
+              Modified_Time: '2026-04-20 11:00:00'
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { default: handler } = await importFresh('../api/recruit/candidates/[candidateId]/resume-content.js');
+      const req = {
+        query: { candidateId: 'candidate-123', attachmentId: 'att-2' },
+        headers: {}
+      };
+      const res = createResponseRecorder();
+
+      await handler(req, res);
+
+      assert.equal(res.code, 404);
+      assert.equal(res.body.ok, false);
+      assert.equal(res.body.error.type, 'not_found');
+    });
+  });
+});
