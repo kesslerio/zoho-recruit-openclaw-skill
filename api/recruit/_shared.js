@@ -251,6 +251,29 @@ async function recruitBinaryRequestOnce(path, { method = "GET", query = {}, toke
     headers: requestHeaders
   });
 
+  const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    const text = await resp.text();
+    const payload = parseJson(text);
+    if (!resp.ok) {
+      throw classifyRecruitError(resp.status, payload, base, path);
+    }
+
+    const embeddedError = unwrapRecruitError(payload);
+    if (embeddedError?.status === "error") {
+      throw classifyRecruitError(resp.status >= 400 ? resp.status : 400, payload, base, path);
+    }
+
+    throw buildRecruitError({
+      status: 502,
+      type: "recruit_api",
+      message: "Recruit binary endpoint returned JSON instead of attachment content",
+      recruitBase: base,
+      path,
+      payload
+    });
+  }
+
   if (!resp.ok) {
     const text = await resp.text();
     const payload = parseJson(text);

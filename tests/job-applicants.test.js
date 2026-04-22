@@ -54,6 +54,11 @@ function jsonResponse(payload, { ok = true, status = 200 } = {}) {
   return {
     ok,
     status,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "content-type" ? "application/json" : null;
+      }
+    },
     text: async () => JSON.stringify(payload)
   };
 }
@@ -234,6 +239,37 @@ test("downloadAttachmentContent returns binary resume bytes", async () => {
 
       assert.equal(result.buffer.toString('utf8'), 'resume bytes');
       assert.equal(result.contentType, 'application/pdf');
+    });
+  });
+});
+
+test("downloadAttachmentContent surfaces embedded Zoho JSON errors", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.endsWith('/Candidates/candidate-123/Attachments/att-1')) {
+        return jsonResponse({
+          status: 'error',
+          code: 'INVALID_DATA',
+          message: 'Attachment is not accessible'
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { downloadAttachmentContent } = await importFresh('../api/recruit/_shared.js');
+      await assert.rejects(
+        () => downloadAttachmentContent({
+          moduleApiName: 'Candidates',
+          recordId: 'candidate-123',
+          attachmentId: 'att-1'
+        }),
+        /Attachment is not accessible/
+      );
     });
   });
 });
