@@ -2,6 +2,7 @@
 title: "Restore Zoho Recruit bridge readiness on Vercel and add applicants fallback"
 category: "integration-issues"
 date: "2026-03-25"
+last_updated: "2026-04-23"
 tags:
   - "zoho-recruit"
   - "vercel"
@@ -10,15 +11,21 @@ tags:
   - "openclaw"
   - "production-incident"
   - "api-fallback"
+  - "candidate-resolution"
+  - "application-lifecycle"
 repo: "kesslerio/zoho-recruit-openclaw-skill"
 status: "resolved"
 severity: "high"
 pr_numbers:
   - 5
   - 6
+  - 9
+  - 10
 commits:
   - "40971f158680e153e05d7780eb0f3b55082fd8fb"
   - "cddd57cdbe1656c6bf4b633bd03955935e4d1445"
+  - "73e4ed907eb3180be13a38d3af6f4aab2db140f6"
+  - "9a49582406f48e4ef899aad8f98e3eae286d2e0e"
 components:
   - "api/_lib.js"
   - "api/health.js"
@@ -26,6 +33,8 @@ components:
   - "api/recruit/_write.js"
   - "api/recruit/_shared.js"
   - "api/recruit/_normalize.js"
+  - "scripts/lib/normalize.mjs"
+  - "scripts/lib/attio.mjs"
   - "vercel env"
   - "zoho oauth"
 ---
@@ -33,6 +42,13 @@ components:
 # Problem
 
 The Zoho Recruit bridge was deployed in Vercel, but production was not actually usable. It had incomplete environment configuration, no working OAuth bootstrap path, misleading health reporting, and no durable token storage. After those issues were fixed, the applicants route still failed because this Zoho Recruit account rejected the direct `JobOpenings/:id/Candidates` relation path.
+
+That March recovery was still incomplete. In April, live recruiting smoke tests showed that the `Applications` fallback restored listing availability but not the full downstream contract:
+
+- resume parsing only worked when a real `candidateId` was supplied manually
+- fallback applicants could still lose `candidateId`
+- questionnaire-based screening in `zoho-attio-recruit-triage` could not fire live because this tenant does not store those questionnaire answers on `Applications` or `Candidates`
+- the only reliable live screening signal was application lifecycle state such as `Application_Status=Unqualified` and `Hiring_Pipeline=Rejected`
 
 # Symptoms
 
@@ -47,6 +63,11 @@ The Zoho Recruit bridge was deployed in Vercel, but production was not actually 
   - code: `INVALID_DATA`
   - message: `the relation name given seems to be invalid`
   - path: `/recruit/v2/JobOpenings/<jobId>/Candidates`
+- After the `Applications` fallback shipped, live resume parsing worked only when a real `candidateId` was provided separately
+- Live `/api/recruit/jobs/850051000000560065/applicants` originally returned fallback rows with `candidateId: null`, which blocked automatic candidate enrichment and resume parsing
+- A live dry-run against `zoho-attio-recruit-triage` returned `advance: 0`, `discuss: 6`, `pass: 2`, `screenedOut: 0` even though Benjamin Bennett and Matthew David were already rejected in Zoho
+- Live field metadata showed `Applications` had `36` fields and `Candidates` had `52` fields, with no questionnaire custom fields available on either module
+- Candidate detail still exposed application lifecycle state (`Application_Status=Unqualified`, `Hiring_Pipeline=Rejected`), but downstream normalization flattened that away and treated those applicants as generic `New` candidates
 
 # Root Cause
 
@@ -59,6 +80,11 @@ This was a stack of integration failures rather than one bug.
    - the redirect URI configured in Zoho did not exactly match `/api/oauth/zoho/callback`
    - `ZOHO_SCOPE` contained invalid Recruit scopes
 5. After auth was fixed, this Zoho Recruit account still rejected `JobOpenings/:id/Candidates` with `INVALID_DATA`.
+6. The `Applications` fallback restored list availability, but the bridge still under-modeled what downstream consumers needed:
+   - fallback rows could omit native candidate lookups, so `candidateId` was lost until the bridge recovered it by exact candidate search
+   - normalized applicant payloads did not preserve `Hiring_Pipeline` on the application object or `reviewPayload`
+7. The triage side initially assumed live questionnaire answers would exist on Zoho application records, but this tenant does not store them there. The real live screening signal was application lifecycle state, not questionnaire fields.
+8. Candidate-level status (`New`) could override application-level rejection state (`Unqualified` / `Rejected`) if the bridge and triage code did not explicitly prefer application lifecycle fields.
 
 # Solution
 
@@ -136,23 +162,50 @@ In [api/recruit/_normalize.js](/home/art/projects/skills/work/zoho-recruit-openc
 
 - `normalizeApplicantRecord()` now falls back to the internal application record id (`record.id`) instead of only external `Application_ID`
 
-## Follow-up gap discovered on 2026-04-22
+## PR #9: recover fallback candidate ids for downstream resume parsing
 
-The March fallback restored applicant listing availability, but it did not fully restore applicant-to-candidate linkage.
+Merged in `73e4ed907eb3180be13a38d3af6f4aab2db140f6`.
 
-- Live `Applications` fallback rows in this tenant can still omit usable `Candidate` / `Candidate_Name` / `Candidate_Id` lookups.
-- That means `/api/recruit/jobs/:jobId/applicants` can return rows with `candidateId: null` even though the matching candidate exists.
-- Downstream consumers that need `GET /api/recruit/candidates/:candidateId` or `/resume-content` will stop at applicant listing unless the bridge recovers the internal candidate id from exact application contact data.
+In [api/recruit/_shared.js](/home/art/projects/skills/work/zoho-recruit-openclaw-skill/api/recruit/_shared.js):
 
-The corrected bridge behavior is:
+- fallback applicants now recover internal `candidateId` values by exact candidate search on application `Email`, then `Mobile` and `Phone`
+- duplicate lookups are cached per request so repeated applicant rows do not cause redundant candidate searches
+- ambiguous and failed matches stay explicit in `candidateResolution` metadata instead of being guessed
+- recoverable search failures degrade to unresolved applicants instead of failing the whole endpoint
 
-- keep the `Applications` fallback for listing availability
-- recover `candidateId` from exact candidate search on application `Email`, then `Mobile` / `Phone`, when native lookups are absent
-- leave ambiguous or unresolvable rows explicit via `candidateResolution` metadata instead of guessing
+This closed the candidate-id handoff gap that had blocked live resume parsing from the fallback applicants path.
+
+## PR #10: preserve application lifecycle state as part of the bridge contract
+
+Merged in `9a49582406f48e4ef899aad8f98e3eae286d2e0e`.
+
+In [api/recruit/_normalize.js](/home/art/projects/skills/work/zoho-recruit-openclaw-skill/api/recruit/_normalize.js):
+
+- `normalizeApplicationRecord()` now maps lifecycle stage from `Stage`, `Pipeline_Stage`, `Hiring_Pipeline`, and `Application_Stage`
+- `normalizeApplicantRecord()` now preserves the normalized `application` object on fallback applicants instead of dropping it
+- candidate `reviewPayload` now carries application `status`, `stage`, and `source`, so downstream consumers do not have to infer lifecycle state from raw Zoho records
+
+This made application lifecycle state an explicit read-side contract rather than an accidental raw-field leak.
+
+## Cross-repo follow-up: use application lifecycle state when questionnaire fields are absent
+
+The bridge fix above only mattered because the downstream sync had a second incorrect assumption.
+
+Issue: [zoho-attio-recruit-triage#6](https://github.com/kesslerio/zoho-attio-recruit-triage/issues/6) started as a questionnaire-sync bug. Live investigation showed the tenant did not expose questionnaire answers on `Applications` or `Candidates`, so exact questionnaire screening could not work in production even after the config-driven questionnaire feature merged.
+
+Merged in `kesslerio/zoho-attio-recruit-triage`:
+
+- PR #10 (`bc15c06dce5f26c4b842f8eff2fc97979ef18908`) added the config-driven questionnaire normalization path
+- PR #11 (`a3e223f989c7665e982ee529a68573d2164f0d84`) added the live fallback:
+  - prefer application lifecycle state over generic candidate status
+  - mark applicants screened out when application status/stage is clearly rejected or unqualified
+  - write a compact `Screening outcome: ...` note when questionnaire answers are absent
+
+That is the durable lesson for this stack: exact questionnaire syncing is optional per tenant, but preserving application lifecycle state is mandatory.
 
 # Live Verification
 
-After both PRs were merged and production was redeployed, the following were verified live in production:
+After both March PRs were merged and production was redeployed, the following were verified live in production:
 
 - `GET /api/health`
   - `hasKv: true`
@@ -170,6 +223,30 @@ After both PRs were merged and production was redeployed, the following were ver
 - a safe no-op `PATCH /api/recruit/applications/:applicationId`
   - succeeded live
   - sequential replay returned a cached idempotent response
+
+Additional April verification:
+
+- Hosted bridge resume smoke after PR #9:
+  - `GET /api/recruit/jobs/850051000000560065/applicants` returned fallback data for application `850051000000588062`
+  - the bridge recovered candidate `850051000000588003`
+  - `GET /api/recruit/candidates/850051000000588003/resume-content?applicationId=850051000000588062` returned the real application PDF
+  - local parsing succeeded with `parser: "pdf"` and `textLength: 3249`
+- Live tenant investigation before the lifecycle fix:
+  - the exact questionnaire path did not fire because `Applications` and `Candidates` metadata exposed no questionnaire custom fields
+  - Benjamin Bennett and Matthew David still appeared as active `Screening` candidates
+  - candidate detail for both still carried `Application_Status=Unqualified`
+- Live dry-run against the patched triage code after the lifecycle fix:
+  - batch size `8`
+  - `summary.screenedOut = 2`
+  - Benjamin Bennett and Matthew David both resolved to `status = Passed` and `interviewStage = Passed`
+
+The important distinction is that resume parsing proof came from the hosted bridge after candidate-id recovery, while the lifecycle-screening proof came from patched local code reading live Zoho data. At the time this learning was updated, the bridge lifecycle patch was merged but still needed deployment for hosted `sourceStage` fidelity.
+
+# What Didn't Work
+
+- Assuming the March `Applications` fallback was sufficient once applicant listing came back. It restored availability, not downstream correctness.
+- Assuming the triage questionnaire feature would solve live screening by itself. That path depended on fields this tenant does not actually expose.
+- Trusting candidate-level status (`New`) more than application-level rejection state. That erased the only live signal that mattered.
 
 # Prevention
 
@@ -213,6 +290,16 @@ After both PRs were merged and production was redeployed, the following were ver
 - OAuth callback should return a manual bootstrap payload when KV is absent
 - writes should fail explicitly without KV
 - Zoho relation endpoints are not reliable across accounts, so fallback logic is necessary
+- `Applications` fallback rows must be treated as a contract surface, not as a temporary compatibility hack. If downstream code needs `candidateId`, application status, or application stage, the bridge should preserve them explicitly.
+
+## Prefer live-verified signals over planned fields
+
+- before building tenant-specific logic around questionnaire answers, verify that those fields actually exist in live Zoho metadata
+- when a tenant does not expose questionnaire answers on `Applications` or `Candidates`, treat application lifecycle state as the required fallback signal
+- do not let generic candidate status overwrite application lifecycle status during enrichment
+- keep regression tests for both:
+  - fallback candidate-id recovery
+  - lifecycle-screened applicants that must become `Passed` downstream
 
 # Safe Smoke Tests
 
@@ -222,6 +309,16 @@ After both PRs were merged and production was redeployed, the following were ver
 2. `GET /api/recruit/ping`
 3. `GET /api/recruit/jobs`
 4. `GET /api/recruit/jobs/:jobId/applicants`
+   - verify `info.source === "applications_fallback"` when direct relations fail
+   - verify fallback applicants expose `candidateResolution`
+   - verify fallback applicants expose `application.status` and `application.stage` when Zoho supplies them
+
+## Resume path
+
+1. `GET /api/recruit/jobs/:jobId/applicants`
+2. pick a fallback applicant with recovered `candidateId`
+3. `GET /api/recruit/candidates/:candidateId/resume-content?applicationId=<applicationId>`
+4. verify the returned bytes parse as a real PDF or DOCX and produce non-empty text
 
 ## Write-side
 
@@ -231,7 +328,9 @@ After both PRs were merged and production was redeployed, the following were ver
 
 # Residual Risk
 
-The current idempotency implementation was proven for sequential replay, not for truly concurrent duplicate writes. Two simultaneous identical write requests can still race before the first cached response is written.
+- The current idempotency implementation was proven for sequential replay, not for truly concurrent duplicate writes. Two simultaneous identical write requests can still race before the first cached response is written.
+- Fallback applicants can still remain unresolved when candidate search is ambiguous or the tenant lacks usable contact data. That ambiguity should stay explicit via `candidateResolution`, not be guessed away.
+- Exact questionnaire syncing is still tenant-dependent. If the tenant later adds custom questionnaire fields, the triage config can use them, but lifecycle fallback should remain in place.
 
 # Related Files
 
@@ -239,6 +338,8 @@ The current idempotency implementation was proven for sequential replay, not for
 - [SKILL.md](/home/art/projects/skills/work/zoho-recruit-openclaw-skill/SKILL.md)
 - [operations.md](/home/art/projects/skills/work/zoho-recruit-openclaw-skill/references/operations.md)
 - [.env.example](/home/art/projects/skills/work/zoho-recruit-openclaw-skill/.env.example)
+- [zoho-attio-recruit-triage issue #6](https://github.com/kesslerio/zoho-attio-recruit-triage/issues/6)
+- [zoho-attio-recruit-triage PR #11](https://github.com/kesslerio/zoho-attio-recruit-triage/pull/11)
 
 # Follow-Up
 
