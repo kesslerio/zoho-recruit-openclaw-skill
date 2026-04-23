@@ -8,7 +8,9 @@ export const RECRUIT_MODULES = {
 };
 
 const SEARCH_FIELDS = {
-  jobTitle: ["Posting_Title", "Potential_Name"]
+  jobTitle: ["Posting_Title", "Potential_Name"],
+  candidateEmail: ["Email", "Personal_Email"],
+  candidatePhone: ["Mobile", "Phone"]
 };
 
 const AUTH_ERROR_CODES = new Set([
@@ -39,6 +41,207 @@ export function clampPositiveInt(value, fallback, { min = 1, max = 200 } = {}) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function normalizeEmail(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return text || null;
+}
+
+function normalizePhone(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
+  const digits = text.replace(/[^\d]/g, "");
+  if (digits.length < 10) return null;
+  if (text.startsWith("+")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return `+${digits}`;
+}
+
+function extractCandidateLookupId(record) {
+  const candidate = record?.Candidate;
+  if (candidate && typeof candidate === "object") {
+    const id = firstDefined(candidate.id, candidate.ID, candidate.value);
+    if (id) return String(id);
+  }
+
+  const candidateName = record?.Candidate_Name;
+  if (candidateName && typeof candidateName === "object") {
+    const id = firstDefined(candidateName.id, candidateName.ID, candidateName.value);
+    if (id) return String(id);
+  }
+
+  const candidateId = firstDefined(record?.Candidate_Id, record?.Candidate_ID);
+  return candidateId ? String(candidateId) : null;
+}
+
+function buildCandidateSearchAttempts(record) {
+  const email = normalizeEmail(firstDefined(record?.Email, record?.Personal_Email, null));
+  const mobile = normalizePhone(firstDefined(record?.Mobile, null));
+  const phone = normalizePhone(firstDefined(record?.Phone, null));
+  const attempts = [];
+
+  if (email) {
+    attempts.push({
+      field: "Email",
+      value: email,
+      normalizedValue: email,
+      matchedBy: "email",
+      cacheKey: `email:${email}`
+    });
+  }
+
+  for (const [field, matchedBy, value] of [
+    ["Mobile", "mobile", mobile],
+    ["Phone", "phone", phone]
+  ]) {
+    if (!value) continue;
+    const cacheKey = `phone:${value}`;
+    if (attempts.some((attempt) => attempt.cacheKey === cacheKey)) continue;
+    attempts.push({
+      field,
+      value,
+      normalizedValue: value,
+      matchedBy,
+      cacheKey
+    });
+  }
+
+  return attempts;
+}
+
+function exactCandidateMatches(record, attempt) {
+  if (attempt.matchedBy === "email") {
+    return SEARCH_FIELDS.candidateEmail.some((field) => normalizeEmail(record?.[field]) === attempt.normalizedValue);
+  }
+
+  return SEARCH_FIELDS.candidatePhone.some((field) => normalizePhone(record?.[field]) === attempt.normalizedValue);
+}
+
+async function searchCandidatesByExactValue(attempt) {
+  try {
+    const result = await recruitRequest(`/recruit/v2/${RECRUIT_MODULES.candidates}/search`, {
+      query: {
+        criteria: `(${attempt.field}:equals:${escapeRecruitCriteriaValue(attempt.value)})`
+      }
+    });
+
+    const records = Array.isArray(result.payload?.data) ? result.payload.data : [];
+    return records.filter((record) => exactCandidateMatches(record, attempt));
+  } catch (error) {
+    const canTreatAsNoMatch = error?.type === "not_found" || error?.code === "INVALID_DATA" || error?.code === "INVALID_QUERY";
+    if (canTreatAsNoMatch) return [];
+    throw error;
+  }
+}
+
+async function resolveApplicationCandidate(record, cache) {
+  const providedCandidateId = extractCandidateLookupId(record);
+  if (providedCandidateId) {
+    return {
+      candidateId: providedCandidateId,
+      candidateResolution: {
+        status: "provided",
+        source: "application_lookup",
+        matchedBy: null,
+        candidateId: providedCandidateId
+      }
+    };
+  }
+
+  const attempts = buildCandidateSearchAttempts(record);
+  if (attempts.length === 0) {
+    return {
+      candidateId: null,
+      candidateResolution: {
+        status: "unresolved",
+        source: "candidate_search",
+        matchedBy: null,
+        reason: "missing_exact_contact",
+        candidateId: null
+      }
+    };
+  }
+
+  let sawAmbiguousMatch = false;
+  for (const attempt of attempts) {
+    let cached = cache.get(attempt.cacheKey);
+    if (!cached) {
+      const matches = await searchCandidatesByExactValue(attempt);
+      if (matches.length === 1) {
+        const candidateId = firstDefined(matches[0]?.id, matches[0]?.ID, null);
+        cached = {
+          candidateId: candidateId ? String(candidateId) : null,
+          candidateResolution: {
+            status: candidateId ? "resolved" : "unresolved",
+            source: "candidate_search",
+            matchedBy: attempt.matchedBy,
+            reason: candidateId ? null : "missing_candidate_id_on_match",
+            candidateId: candidateId ? String(candidateId) : null
+          }
+        };
+      } else if (matches.length > 1) {
+        cached = {
+          candidateId: null,
+          candidateResolution: {
+            status: "unresolved",
+            source: "candidate_search",
+            matchedBy: attempt.matchedBy,
+            reason: "ambiguous_exact_match",
+            candidateId: null
+          }
+        };
+      } else {
+        cached = {
+          candidateId: null,
+          candidateResolution: {
+            status: "unresolved",
+            source: "candidate_search",
+            matchedBy: attempt.matchedBy,
+            reason: "no_exact_match",
+            candidateId: null
+          }
+        };
+      }
+      cache.set(attempt.cacheKey, cached);
+    }
+
+    if (cached.candidateId) return cached;
+    if (cached.candidateResolution?.reason === "ambiguous_exact_match") sawAmbiguousMatch = true;
+  }
+
+  return {
+    candidateId: null,
+    candidateResolution: {
+      status: "unresolved",
+      source: "candidate_search",
+      matchedBy: null,
+      reason: sawAmbiguousMatch ? "ambiguous_exact_match" : "no_exact_match",
+      candidateId: null
+    }
+  };
+}
+
+async function resolveFallbackApplicationCandidates(records) {
+  const cache = new Map();
+  const resolved = [];
+
+  for (const record of records) {
+    const { candidateId, candidateResolution } = await resolveApplicationCandidate(record, cache);
+    resolved.push({
+      ...record,
+      ...(candidateId ? { Candidate_Id: candidateId } : {}),
+      candidateResolution
+    });
+  }
+
+  return resolved;
 }
 
 function escapeRecruitCriteriaValue(value) {
@@ -423,7 +626,7 @@ async function listJobApplicantsFromApplications(jobId, query = {}) {
   }
 
   const startIndex = (page - 1) * perPage;
-  const data = matches.slice(startIndex, startIndex + perPage);
+  const data = await resolveFallbackApplicationCandidates(matches.slice(startIndex, startIndex + perPage));
   const hasAdditionalMatches = matches.length > startIndex + data.length;
 
   return {

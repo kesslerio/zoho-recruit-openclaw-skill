@@ -40,7 +40,7 @@ For write-side endpoints, also connect Vercel KV / Upstash and ensure these are 
 - `GET /api/refresh` — refreshes access token from refresh token (protected)
 - `GET /api/recruit/ping` — validates Recruit API reachability (protected)
 - `GET /api/recruit/jobs` — lists job openings or finds one by `id` / exact `title` (protected)
-- `GET /api/recruit/jobs/:jobId/applicants` — lists associated applicants/candidates for a job opening (protected)
+- `GET /api/recruit/jobs/:jobId/applicants` — lists associated applicants/candidates for a job opening (protected). When Zoho rejects direct applicant relations, the bridge falls back to `Applications` and recovers `candidateId` from exact email/mobile/phone candidate matches when possible.
 - `GET /api/recruit/candidates/:candidateId` — returns normalized candidate detail and optional application/job context (protected)
 - `GET /api/recruit/candidates/:candidateId/resume` — returns attachment metadata and resume-oriented download URLs (protected)
 - `POST /api/recruit/applications/:applicationId/decision` — updates application state and writes decision notes (protected)
@@ -77,9 +77,11 @@ Use this callback URL in Zoho API Console:
 ## Workflow notes
 
 - Job title lookups use the Recruit search API, so `ZohoRecruit.search.READ` must be in `ZOHO_SCOPE`.
+- The applicants fallback also uses exact candidate search to recover internal `candidateId` values from application contact data, so `ZohoRecruit.search.READ` is part of the read-side contract, not just title lookup.
 - Attachment-backed candidate/resume flows require `ZohoRecruit.modules.attachments.READ`.
 - Write-side note workflows are safest with `ZohoRecruit.modules.notes.ALL` and require KV-backed idempotency storage.
 - Candidate detail responses include a normalized `reviewPayload` for scoring/rubric workflows.
+- Applicants responses may include `candidateResolution` metadata when the bridge had to recover or could not recover a `candidateId` during `Applications` fallback.
 - Resume endpoint responses merge candidate attachments and optional application attachments when `applicationId` is provided.
 - Zoho attachment `downloadUrl` values require Zoho OAuth authorization when fetched directly.
 - Decision writes are idempotent when callers provide `idempotencyKey` or `sourceRunId`; the same key with a different payload is rejected.
