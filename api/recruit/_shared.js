@@ -59,9 +59,8 @@ function normalizePhone(value) {
   const digits = text.replace(/[^\d]/g, "");
   if (digits.length < 10) return null;
   if (text.startsWith("+")) return `+${digits}`;
-  if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  return `+${digits}`;
+  return digits;
 }
 
 function extractCandidateLookupId(record) {
@@ -133,10 +132,27 @@ async function searchCandidatesByExactValue(attempt) {
     });
 
     const records = Array.isArray(result.payload?.data) ? result.payload.data : [];
-    return records.filter((record) => exactCandidateMatches(record, attempt));
+    return {
+      matches: records.filter((record) => exactCandidateMatches(record, attempt)),
+      error: null
+    };
   } catch (error) {
     const canTreatAsNoMatch = error?.type === "not_found" || error?.code === "INVALID_DATA" || error?.code === "INVALID_QUERY";
-    if (canTreatAsNoMatch) return [];
+    if (canTreatAsNoMatch) {
+      return {
+        matches: [],
+        error: null
+      };
+    }
+
+    const canTreatAsUnresolved = error?.type === "scope" || error?.type === "recruit_api" || error?.type === "missing_module";
+    if (canTreatAsUnresolved) {
+      return {
+        matches: [],
+        error
+      };
+    }
+
     throw error;
   }
 }
@@ -170,10 +186,11 @@ async function resolveApplicationCandidate(record, cache) {
   }
 
   let sawAmbiguousMatch = false;
+  let sawSearchFailure = false;
   for (const attempt of attempts) {
     let cached = cache.get(attempt.cacheKey);
     if (!cached) {
-      const matches = await searchCandidatesByExactValue(attempt);
+      const { matches, error } = await searchCandidatesByExactValue(attempt);
       if (matches.length === 1) {
         const candidateId = firstDefined(matches[0]?.id, matches[0]?.ID, null);
         cached = {
@@ -197,6 +214,17 @@ async function resolveApplicationCandidate(record, cache) {
             candidateId: null
           }
         };
+      } else if (error) {
+        cached = {
+          candidateId: null,
+          candidateResolution: {
+            status: "unresolved",
+            source: "candidate_search",
+            matchedBy: attempt.matchedBy,
+            reason: "candidate_search_failed",
+            candidateId: null
+          }
+        };
       } else {
         cached = {
           candidateId: null,
@@ -214,6 +242,7 @@ async function resolveApplicationCandidate(record, cache) {
 
     if (cached.candidateId) return cached;
     if (cached.candidateResolution?.reason === "ambiguous_exact_match") sawAmbiguousMatch = true;
+    if (cached.candidateResolution?.reason === "candidate_search_failed") sawSearchFailure = true;
   }
 
   return {
@@ -222,7 +251,7 @@ async function resolveApplicationCandidate(record, cache) {
       status: "unresolved",
       source: "candidate_search",
       matchedBy: null,
-      reason: sawAmbiguousMatch ? "ambiguous_exact_match" : "no_exact_match",
+      reason: sawAmbiguousMatch ? "ambiguous_exact_match" : (sawSearchFailure ? "candidate_search_failed" : "no_exact_match"),
       candidateId: null
     }
   };
