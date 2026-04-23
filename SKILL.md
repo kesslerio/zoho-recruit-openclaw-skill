@@ -82,6 +82,7 @@ Use this callback URL in Zoho API Console:
 - Write-side note workflows are safest with `ZohoRecruit.modules.notes.ALL` and require KV-backed idempotency storage.
 - Candidate detail responses include a normalized `reviewPayload` for scoring/rubric workflows.
 - Applicants responses may include `candidateResolution` metadata when the bridge had to recover or could not recover a `candidateId` during `Applications` fallback.
+- Application lifecycle state such as `Application_Status` and `Hiring_Pipeline` should survive normalization so downstream triage can distinguish rejected applicants from generic candidate state.
 - Resume endpoint responses merge candidate attachments and optional application attachments when `applicationId` is provided.
 - Zoho attachment `downloadUrl` values require Zoho OAuth authorization when fetched directly.
 - Decision writes are idempotent when callers provide `idempotencyKey` or `sourceRunId`; the same key with a different payload is rejected.

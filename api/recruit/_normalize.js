@@ -191,6 +191,7 @@ function buildReviewPayload(candidate, attachments, { application = null, job = 
     jobId: job?.id || candidate.jobOpening?.id || null,
     fullName: candidate.fullName,
     status: application?.status || candidate.status,
+    stage: application?.stage || null,
     rating: candidate.rating,
     source: application?.source || candidate.source,
     experienceYears: candidate.experienceYears,
@@ -214,7 +215,7 @@ export function normalizeApplicationRecord(record) {
   return {
     id: String(firstDefined(record?.id, record?.ID, "")),
     status: firstDefined(record?.Application_Status, record?.Status, record?.Candidate_Status, null),
-    stage: firstDefined(record?.Stage, record?.Pipeline_Stage, null),
+    stage: firstDefined(record?.Stage, record?.Pipeline_Stage, record?.Hiring_Pipeline, record?.Application_Stage, null),
     source: firstDefined(record?.Source, record?.Application_Source, null),
     candidate: mergeLookups(
       normalizeLookup(record?.Candidate),
@@ -311,6 +312,7 @@ export function normalizeCandidateRecord(record, { attachments = [], application
 }
 
 export function normalizeApplicantRecord(record, { job = null } = {}) {
+  const application = normalizeApplicationRecord(record);
   const applicationLookup = mergeLookups(
     normalizeLookup(record?.Application),
     normalizeLookup(record?.Application_Name, { primitive: "name" }),
@@ -322,7 +324,7 @@ export function normalizeApplicantRecord(record, { job = null } = {}) {
     normalizeLookup(record?.Candidate_Id, { primitive: "id" })
   );
   const applicationId = applicationLookup?.id ?? firstDefined(record?.id, record?.ID, record?.Application_ID, record?.Application_Id, null) ?? null;
-  const candidate = normalizeCandidateRecord(record, { attachments: [], job });
+  const candidate = normalizeCandidateRecord(record, { attachments: [], application, job });
   const candidateId = firstDefined(record?.candidateResolution?.candidateId, candidateLookup?.id, null) ?? null;
   const candidateResolution = record?.candidateResolution || (candidateId
     ? {
@@ -335,6 +337,7 @@ export function normalizeApplicantRecord(record, { job = null } = {}) {
 
   return {
     ...candidate,
+    application,
     candidateId,
     applicationId,
     candidateResolution,

@@ -93,6 +93,7 @@ If KV is not configured, the OAuth callback returns `manualEnv.ZOHO_REFRESH_TOKE
 - Access tokens are loaded from KV when present, otherwise refreshed from `ZOHO_REFRESH_TOKEN` and cached only in memory for the current runtime instance.
 - Recruit errors are normalized into clear JSON types such as `auth`, `scope`, `missing_module`, `not_found`, and `idempotency_conflict`.
 - Applicants fallback rows may include `candidateResolution` metadata showing whether `candidateId` came from an application lookup, exact candidate search, or remained unresolved.
+- Applicants and candidate-detail payloads preserve application lifecycle state in normalized `application` / `reviewPayload` fields, including `Application_Status` and `Hiring_Pipeline` when Zoho exposes them.
 - Decision endpoints treat `decision` as normalized audit metadata. Actual Recruit stage/status changes come from explicit `target.stage` / `target.status`, extra `fieldValues`, or `ZOHO_RECRUIT_DECISION_FIELD_MAP`; the API does not guess tenant-specific stage names.
 - Decision, note, and patch endpoints support request-level idempotency keyed by `idempotencyKey` or `sourceRunId`. Reusing the same key with a different payload returns `409 idempotency_conflict`.
 - Decision endpoints write a Recruit note by default so downstream CRM sync and audit logging have a durable human-readable trail.

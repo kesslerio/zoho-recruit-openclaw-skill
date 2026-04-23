@@ -151,6 +151,25 @@ test("normalizeApplicantRecord preserves fallback candidate resolution metadata"
   assert.equal(applicant.reviewPayload.candidateResolution?.candidateId, "850051000000577777");
 });
 
+test("normalizeApplicantRecord preserves application lifecycle state for fallback applicants", async () => {
+  const { normalizeApplicantRecord } = await importFresh("../api/recruit/_normalize.js");
+  const applicant = normalizeApplicantRecord({
+    id: "850051000000586080",
+    Application_ID: "ZR_7_APP",
+    Full_Name: "Benjamin Bennett",
+    Email: "ben@example.com",
+    Application_Status: "Unqualified",
+    Hiring_Pipeline: "Rejected",
+    Application_Source: "LinkedIn-Basic"
+  });
+
+  assert.equal(applicant.application.status, "Unqualified");
+  assert.equal(applicant.application.stage, "Rejected");
+  assert.equal(applicant.reviewPayload.status, "Unqualified");
+  assert.equal(applicant.reviewPayload.stage, "Rejected");
+  assert.equal(applicant.reviewPayload.source, "LinkedIn-Basic");
+});
+
 test("listJobApplicants falls back to Applications when Zoho rejects job candidate relations", async () => {
   await withEnv({
     ZOHO_ACCESS_TOKEN: "access-demo",
