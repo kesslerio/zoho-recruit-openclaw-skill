@@ -233,6 +233,76 @@ export async function recruitRequest(path, options = {}) {
   }
 }
 
+async function recruitBinaryRequestOnce(path, { method = "GET", query = {}, token, headers = {} } = {}) {
+  const base = zohoRecruitBase();
+  const url = new URL(`${base}${path.startsWith("/") ? path : `/${path}`}`);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    url.searchParams.set(key, String(value));
+  }
+
+  const requestHeaders = {
+    Authorization: `Zoho-oauthtoken ${token.access_token}`,
+    ...headers
+  };
+
+  const resp = await fetch(url, {
+    method,
+    headers: requestHeaders
+  });
+
+  const contentType = String(resp.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    const text = await resp.text();
+    const payload = parseJson(text);
+    if (!resp.ok) {
+      throw classifyRecruitError(resp.status, payload, base, path);
+    }
+
+    const embeddedError = unwrapRecruitError(payload);
+    if (embeddedError?.status === "error") {
+      throw classifyRecruitError(resp.status >= 400 ? resp.status : 400, payload, base, path);
+    }
+
+    throw buildRecruitError({
+      status: 502,
+      type: "recruit_api",
+      message: "Recruit binary endpoint returned JSON instead of attachment content",
+      recruitBase: base,
+      path,
+      payload
+    });
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    const payload = parseJson(text);
+    throw classifyRecruitError(resp.status, payload, base, path);
+  }
+
+  const arrayBuffer = await resp.arrayBuffer();
+  return {
+    body: Buffer.from(arrayBuffer),
+    response: resp,
+    url: url.toString(),
+    recruitBase: base
+  };
+}
+
+export async function recruitBinaryRequest(path, options = {}) {
+  let token = options.token || await getValidToken();
+
+  try {
+    return await recruitBinaryRequestOnce(path, { ...options, token });
+  } catch (error) {
+    const shouldRetry = error?.type === "auth" && token?.refresh_token;
+    if (!shouldRetry) throw error;
+
+    token = await requestAccessTokenRefresh(token);
+    return recruitBinaryRequestOnce(path, { ...options, token });
+  }
+}
+
 export async function getRecruitRecord(moduleApiName, recordId) {
   const { payload, recruitBase } = await recruitRequest(`/recruit/v2/${moduleApiName}/${encodeURIComponent(recordId)}`);
   const record = Array.isArray(payload?.data) ? payload.data[0] : payload?.data || null;
@@ -435,6 +505,20 @@ export async function getCandidateResumeArtifacts(candidateId, applicationId = n
     sources: collected,
     attachments,
     primaryResume: selectPrimaryResume(attachments)
+  };
+}
+
+export async function downloadAttachmentContent({ moduleApiName, recordId, attachmentId }) {
+  const { body, response, recruitBase, url } = await recruitBinaryRequest(
+    `/recruit/v2/${moduleApiName}/${encodeURIComponent(recordId)}/Attachments/${encodeURIComponent(attachmentId)}`
+  );
+
+  return {
+    buffer: body,
+    contentType: response.headers.get("content-type") || null,
+    contentDisposition: response.headers.get("content-disposition") || null,
+    recruitBase,
+    url
   };
 }
 

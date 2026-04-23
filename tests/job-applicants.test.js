@@ -54,7 +54,46 @@ function jsonResponse(payload, { ok = true, status = 200 } = {}) {
   return {
     ok,
     status,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "content-type" ? "application/json" : null;
+      }
+    },
     text: async () => JSON.stringify(payload)
+  };
+}
+
+function binaryResponse(bytes, { status = 200, contentType = "application/octet-stream" } = {}) {
+  const buffer = Buffer.from(bytes);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "content-type" ? contentType : null;
+      }
+    },
+    arrayBuffer: async () => buffer
+  };
+}
+
+function createResponseRecorder() {
+  return {
+    code: null,
+    headers: {},
+    body: null,
+    status(code) {
+      this.code = code;
+      return this;
+    },
+    setHeader(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+      return this;
+    },
+    send(body) {
+      this.body = JSON.parse(body);
+      return this;
+    }
   };
 }
 
@@ -158,6 +197,194 @@ test("listJobApplicants falls back to Applications when Zoho rejects job candida
       assert.equal(result.payload.info.source, "applications_fallback");
       assert.equal(calls.some((url) => url.includes("/Candidates")), true);
       assert.equal(calls.some((url) => url.includes("/associate")), true);
+    });
+  });
+});
+
+
+test("downloadAttachmentContent returns binary resume bytes", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.includes('/Candidates/candidate-123/Attachments') && !value.endsWith('/att-1')) {
+        return jsonResponse({
+          data: [
+            {
+              id: 'att-1',
+              File_Name: 'resume.pdf',
+              Attachment_Category: 'Resume',
+              Modified_Time: '2026-04-20 10:00:00'
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      if (value.endsWith('/Candidates/candidate-123/Attachments/att-1')) {
+        return binaryResponse('resume bytes', { contentType: 'application/pdf' });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { downloadAttachmentContent } = await importFresh('../api/recruit/_shared.js');
+      const result = await downloadAttachmentContent({
+        moduleApiName: 'Candidates',
+        recordId: 'candidate-123',
+        attachmentId: 'att-1'
+      });
+
+      assert.equal(result.buffer.toString('utf8'), 'resume bytes');
+      assert.equal(result.contentType, 'application/pdf');
+    });
+  });
+});
+
+test("downloadAttachmentContent surfaces embedded Zoho JSON errors", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.endsWith('/Candidates/candidate-123/Attachments/att-1')) {
+        return jsonResponse({
+          status: 'error',
+          code: 'INVALID_DATA',
+          message: 'Attachment is not accessible'
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { downloadAttachmentContent } = await importFresh('../api/recruit/_shared.js');
+      await assert.rejects(
+        () => downloadAttachmentContent({
+          moduleApiName: 'Candidates',
+          recordId: 'candidate-123',
+          attachmentId: 'att-1'
+        }),
+        /Attachment is not accessible/
+      );
+    });
+  });
+});
+
+test("resume-content handler returns base64 for the primary resume", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: 'access-demo',
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: '9999999999999'
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.includes('/Candidates/candidate-123/Attachments') && !value.endsWith('/att-1')) {
+        return jsonResponse({
+          data: [
+            {
+              id: 'att-1',
+              File_Name: 'resume.pdf',
+              Attachment_Category: 'Resume',
+              Modified_Time: '2026-04-20 10:00:00'
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      if (value.endsWith('/Candidates/candidate-123/Attachments/att-1')) {
+        return binaryResponse('resume bytes', { contentType: 'application/pdf' });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { default: handler } = await importFresh('../api/recruit/candidates/[candidateId]/resume-content.js');
+      const req = {
+        query: { candidateId: 'candidate-123' },
+        headers: {}
+      };
+      const res = createResponseRecorder();
+
+      await handler(req, res);
+
+      assert.equal(res.code, 200);
+      assert.equal(res.body.attachment.id, 'att-1');
+      assert.equal(res.body.contentType, 'application/pdf');
+      assert.equal(Buffer.from(res.body.contentBase64, 'base64').toString('utf8'), 'resume bytes');
+    });
+  });
+});
+
+test("selectPrimaryResume falls back to the newest attachment when no resume keywords match", async () => {
+  const { selectPrimaryResume } = await importFresh("../api/recruit/_normalize.js");
+  const primary = selectPrimaryResume([
+    {
+      id: "att-1",
+      fileName: "candidate-profile.pdf",
+      category: "Documents",
+      modifiedTime: "2026-04-20 10:00:00"
+    },
+    {
+      id: "att-2",
+      fileName: "portfolio.pdf",
+      category: "Documents",
+      modifiedTime: "2026-04-20 11:00:00"
+    }
+  ]);
+
+  assert.equal(primary?.id, "att-2");
+});
+
+test("resume-content handler honors explicit attachment ids with generic names", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: 'access-demo',
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: '9999999999999'
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.includes('/Candidates/candidate-123/Attachments') && !value.endsWith('/att-2')) {
+        return jsonResponse({
+          data: [
+            {
+              id: 'att-1',
+              File_Name: 'resume.pdf',
+              Attachment_Category: 'Resume',
+              Modified_Time: '2026-04-20 10:00:00'
+            },
+            {
+              id: 'att-2',
+              File_Name: 'candidate-profile.pdf',
+              Attachment_Category: 'Documents',
+              Modified_Time: '2026-04-20 11:00:00'
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      if (value.endsWith('/Candidates/candidate-123/Attachments/att-2')) {
+        return binaryResponse('generic resume bytes', { contentType: 'application/pdf' });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { default: handler } = await importFresh('../api/recruit/candidates/[candidateId]/resume-content.js');
+      const req = {
+        query: { candidateId: 'candidate-123', attachmentId: 'att-2' },
+        headers: {}
+      };
+      const res = createResponseRecorder();
+
+      await handler(req, res);
+
+      assert.equal(res.code, 200);
+      assert.equal(res.body.attachment.id, 'att-2');
+      assert.equal(Buffer.from(res.body.contentBase64, 'base64').toString('utf8'), 'generic resume bytes');
     });
   });
 });

@@ -91,6 +91,11 @@ export function normalizeAttachmentRecord(record, { moduleApiName, recordId, rec
   };
 }
 
+export function isResumeAttachment(attachment) {
+  const name = `${attachment?.category || ""} ${attachment?.fileName || ""}`.toLowerCase();
+  return /(resume|curriculum vitae|\bcv\b)/.test(name);
+}
+
 export function normalizeNoteRecord(record, { parentId = null, seModule = null, title = null, content = null } = {}) {
   return {
     id: firstDefined(record?.id, record?.ID, record?.details?.id, null)?.toString() || null,
@@ -122,14 +127,14 @@ export function normalizeNoteRecord(record, { parentId = null, seModule = null, 
 
 export function selectPrimaryResume(attachments) {
   const ranked = [...attachments].sort((left, right) => {
-    const leftName = `${left.category || ""} ${left.fileName || ""}`.toLowerCase();
-    const rightName = `${right.category || ""} ${right.fileName || ""}`.toLowerCase();
-    const leftScore = /(resume|cv)/.test(leftName) ? 2 : 0;
-    const rightScore = /(resume|cv)/.test(rightName) ? 2 : 0;
-    const leftTime = Date.parse(left.modifiedTime || left.createdTime || 0) || 0;
-    const rightTime = Date.parse(right.modifiedTime || right.createdTime || 0) || 0;
-    return rightScore - leftScore || rightTime - leftTime;
-  });
+      const leftName = `${left.category || ""} ${left.fileName || ""}`.toLowerCase();
+      const rightName = `${right.category || ""} ${right.fileName || ""}`.toLowerCase();
+      const leftScore = /(resume|cv)/.test(leftName) ? 2 : 0;
+      const rightScore = /(resume|cv)/.test(rightName) ? 2 : 0;
+      const leftTime = Date.parse(left.modifiedTime || left.createdTime || 0) || 0;
+      const rightTime = Date.parse(right.modifiedTime || right.createdTime || 0) || 0;
+      return rightScore - leftScore || rightTime - leftTime;
+    });
 
   return ranked[0] || null;
 }

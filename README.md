@@ -24,6 +24,7 @@ Generic Zoho Recruit OAuth + API bridge for OpenClaw workflows.
 - `GET /api/recruit/jobs/:jobId/applicants` (protected)
 - `GET /api/recruit/candidates/:candidateId` (protected)
 - `GET /api/recruit/candidates/:candidateId/resume` (protected)
+- `GET /api/recruit/candidates/:candidateId/resume-content` (protected)
 - `POST /api/recruit/applications/:applicationId/decision` (protected)
 - `POST /api/recruit/candidates/:candidateId/decision` (protected)
 - `POST /api/recruit/applications/:applicationId/notes` (protected)
@@ -37,6 +38,7 @@ Query and payload notes:
 - `GET /api/recruit/jobs/:jobId/applicants?page=1&perPage=50` lists associated candidates/applicants.
 - `GET /api/recruit/candidates/:candidateId?applicationId=<applicationId>&jobId=<jobId>` adds optional application/job context.
 - `GET /api/recruit/candidates/:candidateId/resume?applicationId=<applicationId>` returns candidate attachments plus optional application attachments.
+- `GET /api/recruit/candidates/:candidateId/resume-content?applicationId=<applicationId>&attachmentId=<attachmentId>` returns base64-encoded bytes for the selected resume attachment, defaulting to the primary resume.
 - Decision endpoints accept `decision`, optional `target.stage` / `target.status`, reviewer metadata, scorecards, rationale, external sync metadata, and `idempotencyKey` / `sourceRunId`.
 - Note endpoints accept plain `content` or the same structured review metadata used by decision writes.
 - The application patch endpoint accepts `{ "fields": { ... } }` plus optional `trigger`, `idempotencyKey`, and `sourceRunId`.
