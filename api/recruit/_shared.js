@@ -102,7 +102,7 @@ function buildCandidateSearchAttempts(record) {
     ["Phone", "phone", phone]
   ]) {
     if (!value) continue;
-    const cacheKey = `phone:${value}`;
+    const cacheKey = `${matchedBy}:${value}`;
     if (attempts.some((attempt) => attempt.cacheKey === cacheKey)) continue;
     attempts.push({
       field,

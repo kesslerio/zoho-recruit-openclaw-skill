@@ -408,6 +408,100 @@ test("listJobApplicants fallback does not treat Candidate_ID candidate numbers a
   });
 });
 
+test("listJobApplicants fallback retries exact phone lookup when mobile and phone share digits", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    const candidateSearchCalls = [];
+
+    await withMockFetch(async (url) => {
+      const value = String(url);
+      const parsed = new URL(value);
+      const criteria = parsed.searchParams.get("criteria");
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Mobile: "+16363780078",
+              Phone: "+1 (636) 378-0078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        candidateSearchCalls.push(criteria);
+
+        if (criteria === "(Mobile:equals:+16363780078)") {
+          return jsonResponse({
+            data: [],
+            info: { more_records: false }
+          });
+        }
+
+        if (criteria === "(Phone:equals:+16363780078)") {
+          return jsonResponse({
+            data: [
+              {
+                id: "850051000000577777",
+                Candidate_ID: "ZR_8_CAND",
+                Full_Name: "Jacoby Curry",
+                Phone: "+16363780078"
+              }
+            ],
+            info: { more_records: false }
+          });
+        }
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 1);
+      assert.equal(result.payload.data[0].Candidate_Id, "850051000000577777");
+      assert.equal(result.payload.data[0].candidateResolution?.status, "resolved");
+      assert.equal(result.payload.data[0].candidateResolution?.matchedBy, "phone");
+      assert.deepEqual(candidateSearchCalls, [
+        "(Mobile:equals:+16363780078)",
+        "(Phone:equals:+16363780078)"
+      ]);
+    });
+  });
+});
+
 test("listJobApplicants fallback keeps ambiguous candidate searches unresolved", async () => {
   await withEnv({
     ZOHO_ACCESS_TOKEN: "access-demo",
