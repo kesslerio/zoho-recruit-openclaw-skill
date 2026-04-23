@@ -323,17 +323,27 @@ export function normalizeApplicantRecord(record, { job = null } = {}) {
   );
   const applicationId = applicationLookup?.id ?? firstDefined(record?.id, record?.ID, record?.Application_ID, record?.Application_Id, null) ?? null;
   const candidate = normalizeCandidateRecord(record, { attachments: [], job });
-  const candidateId = candidateLookup?.id ?? null;
+  const candidateId = firstDefined(record?.candidateResolution?.candidateId, candidateLookup?.id, null) ?? null;
+  const candidateResolution = record?.candidateResolution || (candidateId
+    ? {
+        status: "provided",
+        source: "record_lookup",
+        matchedBy: null,
+        candidateId
+      }
+    : null);
 
   return {
     ...candidate,
     candidateId,
     applicationId,
+    candidateResolution,
     reviewPayload: {
       ...candidate.reviewPayload,
       candidateId,
       applicationId,
-      jobId: job?.id || candidate.jobOpening?.id || null
+      jobId: job?.id || candidate.jobOpening?.id || null,
+      candidateResolution
     }
   };
 }

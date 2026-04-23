@@ -35,7 +35,7 @@ Query and payload notes:
 
 - `GET /api/recruit/jobs?id=<jobId>` fetches one job opening by id.
 - `GET /api/recruit/jobs?title=<exact title>` looks up job openings by exact title.
-- `GET /api/recruit/jobs/:jobId/applicants?page=1&perPage=50` lists associated candidates/applicants.
+- `GET /api/recruit/jobs/:jobId/applicants?page=1&perPage=50` lists associated candidates/applicants. When direct job-applicant relations fail and the bridge falls back to `Applications`, it resolves `candidateId` from exact application email/mobile/phone matches when Zoho candidate lookups are absent.
 - `GET /api/recruit/candidates/:candidateId?applicationId=<applicationId>&jobId=<jobId>` adds optional application/job context.
 - `GET /api/recruit/candidates/:candidateId/resume?applicationId=<applicationId>` returns candidate attachments plus optional application attachments.
 - `GET /api/recruit/candidates/:candidateId/resume-content?applicationId=<applicationId>&attachmentId=<attachmentId>` returns base64-encoded bytes for the selected resume attachment, defaulting to the primary resume.
@@ -92,13 +92,14 @@ If KV is not configured, the OAuth callback returns `manualEnv.ZOHO_REFRESH_TOKE
 
 - Access tokens are loaded from KV when present, otherwise refreshed from `ZOHO_REFRESH_TOKEN` and cached only in memory for the current runtime instance.
 - Recruit errors are normalized into clear JSON types such as `auth`, `scope`, `missing_module`, `not_found`, and `idempotency_conflict`.
+- Applicants fallback rows may include `candidateResolution` metadata showing whether `candidateId` came from an application lookup, exact candidate search, or remained unresolved.
 - Decision endpoints treat `decision` as normalized audit metadata. Actual Recruit stage/status changes come from explicit `target.stage` / `target.status`, extra `fieldValues`, or `ZOHO_RECRUIT_DECISION_FIELD_MAP`; the API does not guess tenant-specific stage names.
 - Decision, note, and patch endpoints support request-level idempotency keyed by `idempotencyKey` or `sourceRunId`. Reusing the same key with a different payload returns `409 idempotency_conflict`.
 - Decision endpoints write a Recruit note by default so downstream CRM sync and audit logging have a durable human-readable trail.
 - Decision and note writes include OpenClaw idempotency/source-run markers in note content and try to reuse a matching recent note before creating another one.
 - Write-side endpoints return a config error when KV is missing instead of pretending idempotency still exists.
 - Resume responses expose attachment metadata and direct Zoho download URLs when Zoho returns attachment ids. Downloading those URLs still requires a valid Zoho OAuth token.
-- Title lookup uses the Recruit search API. Candidate detail responses with attachments and the resume endpoint also require `ZohoRecruit.modules.attachments.READ`; note workflows are safest with `ZohoRecruit.modules.notes.ALL`. After changing scopes, reconnect OAuth before retrying.
+- Title lookup uses the Recruit search API. The applicants fallback also uses exact candidate search to recover internal `candidateId` values from application contact data, so `ZohoRecruit.search.READ` is required for end-to-end applicant enrichment. Candidate detail responses with attachments and the resume endpoint also require `ZohoRecruit.modules.attachments.READ`; note workflows are safest with `ZohoRecruit.modules.notes.ALL`. After changing scopes, reconnect OAuth before retrying.
 - Zoho field names vary across tenants. The normalized payloads prefer standard Recruit fields and let operators map custom fields through `ZOHO_RECRUIT_DECISION_FIELD_MAP` rather than baking tenant assumptions into the routes.
 - Notes APIs assume the Recruit `Notes` module is available for the target record type. If your tenant does not expose notes for `Applications`, use mapped fields and/or candidate notes instead.
 
@@ -146,6 +147,7 @@ If KV is not configured, the OAuth callback returns `manualEnv.ZOHO_REFRESH_TOKE
 ## Response shape highlights
 
 - Stable resource identifiers (`applicationId`, `candidateId`, `jobOpeningId` where available)
+- Applicant fallback metadata (`candidateResolution`) when the bridge has to recover candidate ids from `Applications`
 - `previousState`, `currentState`, and `stateChange`
 - `created.noteIds` / `created.reviewIds`
 - Normalized `decision` summary and idempotency metadata

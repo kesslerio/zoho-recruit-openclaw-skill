@@ -136,6 +136,20 @@ In [api/recruit/_normalize.js](/home/art/projects/skills/work/zoho-recruit-openc
 
 - `normalizeApplicantRecord()` now falls back to the internal application record id (`record.id`) instead of only external `Application_ID`
 
+## Follow-up gap discovered on 2026-04-22
+
+The March fallback restored applicant listing availability, but it did not fully restore applicant-to-candidate linkage.
+
+- Live `Applications` fallback rows in this tenant can still omit usable `Candidate` / `Candidate_Name` / `Candidate_Id` lookups.
+- That means `/api/recruit/jobs/:jobId/applicants` can return rows with `candidateId: null` even though the matching candidate exists.
+- Downstream consumers that need `GET /api/recruit/candidates/:candidateId` or `/resume-content` will stop at applicant listing unless the bridge recovers the internal candidate id from exact application contact data.
+
+The corrected bridge behavior is:
+
+- keep the `Applications` fallback for listing availability
+- recover `candidateId` from exact candidate search on application `Email`, then `Mobile` / `Phone`, when native lookups are absent
+- leave ambiguous or unresolvable rows explicit via `candidateResolution` metadata instead of guessing
+
 # Live Verification
 
 After both PRs were merged and production was redeployed, the following were verified live in production:
