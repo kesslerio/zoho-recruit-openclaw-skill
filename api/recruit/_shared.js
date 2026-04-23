@@ -77,7 +77,7 @@ function extractCandidateLookupId(record) {
     if (id) return String(id);
   }
 
-  const candidateId = firstDefined(record?.Candidate_Id, record?.Candidate_ID);
+  const candidateId = firstDefined(record?.Candidate_Id);
   return candidateId ? String(candidateId) : null;
 }
 
