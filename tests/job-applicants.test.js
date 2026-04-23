@@ -128,6 +128,29 @@ test("normalizeApplicantRecord preserves the related candidate record id separat
   assert.equal(applicant.reviewPayload.candidateId, "850051000000577777");
 });
 
+test("normalizeApplicantRecord preserves fallback candidate resolution metadata", async () => {
+  const { normalizeApplicantRecord } = await importFresh("../api/recruit/_normalize.js");
+  const applicant = normalizeApplicantRecord({
+    id: "850051000000588062",
+    Application_ID: "ZR_8_APP",
+    Full_Name: "Jacoby Curry",
+    Email: "coby@example.com",
+    candidateResolution: {
+      status: "resolved",
+      source: "candidate_search",
+      matchedBy: "email",
+      reason: null,
+      candidateId: "850051000000577777"
+    }
+  });
+
+  assert.equal(applicant.applicationId, "850051000000588062");
+  assert.equal(applicant.candidateId, "850051000000577777");
+  assert.equal(applicant.candidateResolution?.status, "resolved");
+  assert.equal(applicant.candidateResolution?.matchedBy, "email");
+  assert.equal(applicant.reviewPayload.candidateResolution?.candidateId, "850051000000577777");
+});
+
 test("listJobApplicants falls back to Applications when Zoho rejects job candidate relations", async () => {
   await withEnv({
     ZOHO_ACCESS_TOKEN: "access-demo",
@@ -183,6 +206,13 @@ test("listJobApplicants falls back to Applications when Zoho rejects job candida
         });
       }
 
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        return jsonResponse({
+          data: [],
+          info: { more_records: false }
+        });
+      }
+
       throw new Error(`Unexpected fetch: ${value}`);
     }, async () => {
       const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
@@ -194,9 +224,608 @@ test("listJobApplicants falls back to Applications when Zoho rejects job candida
 
       assert.equal(result.payload.data.length, 1);
       assert.equal(result.payload.data[0].id, "850051000000588062");
+      assert.equal(result.payload.data[0].Candidate_Id, undefined);
+      assert.equal(result.payload.data[0].candidateResolution?.status, "unresolved");
       assert.equal(result.payload.info.source, "applications_fallback");
       assert.equal(calls.some((url) => url.includes("/Candidates")), true);
       assert.equal(calls.some((url) => url.includes("/associate")), true);
+    });
+  });
+});
+
+test("listJobApplicants fallback resolves unique candidate ids from exact email and caches duplicate lookups", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    const candidateSearchCalls = [];
+
+    await withMockFetch(async (url) => {
+      const value = String(url);
+      const parsed = new URL(value);
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078",
+              Application_Status: "Applied"
+            },
+            {
+              id: "850051000000588064",
+              Application_ID: "ZR_8_APP_2",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry Duplicate",
+              Email: "coby@example.com",
+              Mobile: "+16363780078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 2,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        candidateSearchCalls.push(parsed.searchParams.get("criteria"));
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000577777",
+              Candidate_ID: "ZR_8_CAND",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078"
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 2);
+      assert.equal(result.payload.data[0].Candidate_Id, "850051000000577777");
+      assert.equal(result.payload.data[0].candidateResolution?.status, "resolved");
+      assert.equal(result.payload.data[0].candidateResolution?.matchedBy, "email");
+      assert.equal(result.payload.data[1].Candidate_Id, "850051000000577777");
+      assert.equal(result.payload.data[1].candidateResolution?.status, "resolved");
+      assert.deepEqual(candidateSearchCalls, ["(Email:equals:coby@example.com)"]);
+    });
+  });
+});
+
+test("listJobApplicants fallback does not treat Candidate_ID candidate numbers as internal record ids", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    const candidateSearchCalls = [];
+
+    await withMockFetch(async (url) => {
+      const value = String(url);
+      const parsed = new URL(value);
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              Candidate_ID: "ZR_8_CAND",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        candidateSearchCalls.push(parsed.searchParams.get("criteria"));
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000577777",
+              Candidate_ID: "ZR_8_CAND",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078"
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 1);
+      assert.equal(result.payload.data[0].Candidate_Id, "850051000000577777");
+      assert.equal(result.payload.data[0].Candidate_ID, "ZR_8_CAND");
+      assert.equal(result.payload.data[0].candidateResolution?.status, "resolved");
+      assert.equal(result.payload.data[0].candidateResolution?.source, "candidate_search");
+      assert.deepEqual(candidateSearchCalls, ["(Email:equals:coby@example.com)"]);
+    });
+  });
+});
+
+test("listJobApplicants fallback retries exact phone lookup when mobile and phone share digits", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    const candidateSearchCalls = [];
+
+    await withMockFetch(async (url) => {
+      const value = String(url);
+      const parsed = new URL(value);
+      const criteria = parsed.searchParams.get("criteria");
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Mobile: "+16363780078",
+              Phone: "+1 (636) 378-0078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        candidateSearchCalls.push(criteria);
+
+        if (criteria === "(Mobile:equals:+16363780078)") {
+          return jsonResponse({
+            data: [],
+            info: { more_records: false }
+          });
+        }
+
+        if (criteria === "(Phone:equals:+16363780078)") {
+          return jsonResponse({
+            data: [
+              {
+                id: "850051000000577777",
+                Candidate_ID: "ZR_8_CAND",
+                Full_Name: "Jacoby Curry",
+                Phone: "+16363780078"
+              }
+            ],
+            info: { more_records: false }
+          });
+        }
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 1);
+      assert.equal(result.payload.data[0].Candidate_Id, "850051000000577777");
+      assert.equal(result.payload.data[0].candidateResolution?.status, "resolved");
+      assert.equal(result.payload.data[0].candidateResolution?.matchedBy, "phone");
+      assert.deepEqual(candidateSearchCalls, [
+        "(Mobile:equals:+16363780078)",
+        "(Phone:equals:+16363780078)"
+      ]);
+    });
+  });
+});
+
+test("listJobApplicants fallback preserves 10-digit local phones without prepending +1", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    const candidateSearchCalls = [];
+
+    await withMockFetch(async (url) => {
+      const value = String(url);
+      const parsed = new URL(value);
+      const criteria = parsed.searchParams.get("criteria");
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Mobile: "6363780078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        candidateSearchCalls.push(criteria);
+
+        if (criteria === "(Mobile:equals:6363780078)") {
+          return jsonResponse({
+            data: [
+              {
+                id: "850051000000577777",
+                Candidate_ID: "ZR_8_CAND",
+                Full_Name: "Jacoby Curry",
+                Mobile: "6363780078"
+              }
+            ],
+            info: { more_records: false }
+          });
+        }
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 1);
+      assert.equal(result.payload.data[0].Candidate_Id, "850051000000577777");
+      assert.equal(result.payload.data[0].candidateResolution?.status, "resolved");
+      assert.equal(result.payload.data[0].candidateResolution?.matchedBy, "mobile");
+      assert.deepEqual(candidateSearchCalls, [
+        "(Mobile:equals:6363780078)"
+      ]);
+    });
+  });
+});
+
+test("listJobApplicants fallback keeps ambiguous candidate searches unresolved", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000577777",
+              Candidate_ID: "ZR_8_CAND",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078"
+            },
+            {
+              id: "850051000000577778",
+              Candidate_ID: "ZR_9_CAND",
+              Full_Name: "Jacoby Curry Clone",
+              Email: "coby@example.com",
+              Mobile: "+16363780078"
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 1);
+      assert.equal(result.payload.data[0].Candidate_Id, undefined);
+      assert.equal(result.payload.data[0].candidateResolution?.status, "unresolved");
+      assert.equal(result.payload.data[0].candidateResolution?.reason, "ambiguous_exact_match");
+    });
+  });
+});
+
+test("listJobApplicants fallback keeps applicants when candidate search fails", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        return jsonResponse({
+          code: "NO_PERMISSION",
+          message: "the user does not have permission to access this resource"
+        }, { ok: false, status: 403 });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { listJobApplicants } = await importFresh("../api/recruit/_shared.js");
+      const result = await listJobApplicants("850051000000560065", {
+        page: 1,
+        per_page: 50,
+        candidate_statuses: "Applied"
+      });
+
+      assert.equal(result.payload.data.length, 1);
+      assert.equal(result.payload.data[0].Candidate_Id, undefined);
+      assert.equal(result.payload.data[0].candidateResolution?.status, "unresolved");
+      assert.equal(result.payload.data[0].candidateResolution?.reason, "candidate_search_failed");
+      assert.equal(result.payload.info.source, "applications_fallback");
+    });
+  });
+});
+
+test("job applicants handler returns fallback applicants with resolved candidate ids", async () => {
+  await withEnv({
+    ZOHO_ACCESS_TOKEN: "access-demo",
+    ZOHO_ACCESS_TOKEN_EXPIRES_AT: "9999999999999"
+  }, async () => {
+    await withMockFetch(async (url) => {
+      const value = String(url);
+
+      if (value.endsWith("/recruit/v2/JobOpenings/850051000000560065")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000560065",
+              Posting_Title: "Founding Sales Rep (Full-Cycle) (Remote, US)",
+              Job_Opening_Status: "In-progress"
+            }
+          ]
+        });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/Candidates")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/JobOpenings/850051000000560065/associate")) {
+        return jsonResponse({
+          code: "INVALID_DATA",
+          message: "the relation name given seems to be invalid"
+        }, { ok: false, status: 400 });
+      }
+
+      if (value.includes("/recruit/v2/Applications?page=1&per_page=200")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000588062",
+              Application_ID: "ZR_8_APP",
+              $Job_Opening_Id: "850051000000560065",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078",
+              Application_Status: "Applied"
+            }
+          ],
+          info: {
+            count: 1,
+            page: 1,
+            per_page: 200,
+            more_records: false
+          }
+        });
+      }
+
+      if (value.includes("/recruit/v2/Candidates/search")) {
+        return jsonResponse({
+          data: [
+            {
+              id: "850051000000577777",
+              Candidate_ID: "ZR_8_CAND",
+              Full_Name: "Jacoby Curry",
+              Email: "coby@example.com",
+              Mobile: "+16363780078"
+            }
+          ],
+          info: { more_records: false }
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${value}`);
+    }, async () => {
+      const { default: handler } = await importFresh("../api/recruit/jobs/[jobId]/applicants.js");
+      const req = {
+        query: { jobId: "850051000000560065", page: "1", perPage: "50" },
+        headers: {}
+      };
+      const res = createResponseRecorder();
+
+      await handler(req, res);
+
+      assert.equal(res.code, 200);
+      assert.equal(res.body.ok, true);
+      assert.equal(res.body.info.source, "applications_fallback");
+      assert.equal(res.body.applicants[0].candidateId, "850051000000577777");
+      assert.equal(res.body.applicants[0].candidateResolution.status, "resolved");
+      assert.equal(res.body.reviewPayloads[0].candidateId, "850051000000577777");
     });
   });
 });
