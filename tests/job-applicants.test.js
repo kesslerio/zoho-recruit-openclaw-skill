@@ -319,7 +319,27 @@ test("resume-content handler returns base64 for the primary resume", async () =>
   });
 });
 
-test("resume-content handler rejects non-resume attachment ids", async () => {
+test("selectPrimaryResume falls back to the newest attachment when no resume keywords match", async () => {
+  const { selectPrimaryResume } = await importFresh("../api/recruit/_normalize.js");
+  const primary = selectPrimaryResume([
+    {
+      id: "att-1",
+      fileName: "candidate-profile.pdf",
+      category: "Documents",
+      modifiedTime: "2026-04-20 10:00:00"
+    },
+    {
+      id: "att-2",
+      fileName: "portfolio.pdf",
+      category: "Documents",
+      modifiedTime: "2026-04-20 11:00:00"
+    }
+  ]);
+
+  assert.equal(primary?.id, "att-2");
+});
+
+test("resume-content handler honors explicit attachment ids with generic names", async () => {
   await withEnv({
     ZOHO_ACCESS_TOKEN: 'access-demo',
     ZOHO_ACCESS_TOKEN_EXPIRES_AT: '9999999999999'
@@ -327,7 +347,7 @@ test("resume-content handler rejects non-resume attachment ids", async () => {
     await withMockFetch(async (url) => {
       const value = String(url);
 
-      if (value.includes('/Candidates/candidate-123/Attachments')) {
+      if (value.includes('/Candidates/candidate-123/Attachments') && !value.endsWith('/att-2')) {
         return jsonResponse({
           data: [
             {
@@ -338,13 +358,17 @@ test("resume-content handler rejects non-resume attachment ids", async () => {
             },
             {
               id: 'att-2',
-              File_Name: 'notes.txt',
-              Attachment_Category: 'Other',
+              File_Name: 'candidate-profile.pdf',
+              Attachment_Category: 'Documents',
               Modified_Time: '2026-04-20 11:00:00'
             }
           ],
           info: { more_records: false }
         });
+      }
+
+      if (value.endsWith('/Candidates/candidate-123/Attachments/att-2')) {
+        return binaryResponse('generic resume bytes', { contentType: 'application/pdf' });
       }
 
       throw new Error(`Unexpected fetch: ${value}`);
@@ -358,9 +382,9 @@ test("resume-content handler rejects non-resume attachment ids", async () => {
 
       await handler(req, res);
 
-      assert.equal(res.code, 404);
-      assert.equal(res.body.ok, false);
-      assert.equal(res.body.error.type, 'not_found');
+      assert.equal(res.code, 200);
+      assert.equal(res.body.attachment.id, 'att-2');
+      assert.equal(Buffer.from(res.body.contentBase64, 'base64').toString('utf8'), 'generic resume bytes');
     });
   });
 });

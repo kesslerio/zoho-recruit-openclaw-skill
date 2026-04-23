@@ -126,9 +126,7 @@ export function normalizeNoteRecord(record, { parentId = null, seModule = null, 
 }
 
 export function selectPrimaryResume(attachments) {
-  const ranked = [...attachments]
-    .filter((attachment) => isResumeAttachment(attachment))
-    .sort((left, right) => {
+  const ranked = [...attachments].sort((left, right) => {
       const leftName = `${left.category || ""} ${left.fileName || ""}`.toLowerCase();
       const rightName = `${right.category || ""} ${right.fileName || ""}`.toLowerCase();
       const leftScore = /(resume|cv)/.test(leftName) ? 2 : 0;
